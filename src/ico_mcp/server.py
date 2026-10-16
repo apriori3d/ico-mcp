@@ -20,12 +20,13 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from ico_mcp import pipelines, traces
 from ico_mcp.config import Config, ConfigError, load_config
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
+from ico_mcp.proposals import Example, ProposalError, propose
 from ico_mcp.protocol import JsonObject, KernelError
 
 INSTRUCTIONS = """\
@@ -36,21 +37,33 @@ Build and run data pipelines from a registry of typed operators.
    step (by input_type / output_type / text / tags), then validate, then run.
    Specs are JSON: {"kind": "op", "op": "name@version", "params": {...}} for
    an operator, {"kind": "seq", "children": [...]} for a chain.
-3. Write a new operator only when a step is missing. Keep operators small,
-   typed and parametric; configuration goes into constructor params, not
-   into closures; heavy models load lazily.
+3. Write a new operator (propose_operator) only when a step is missing.
+   Keep operators small, typed and parametric; configuration goes into
+   constructor params, not into closures; heavy models load lazily. Give
+   examples for operators with JSON inputs and outputs.
 4. Pass data by reference (paths or URIs), never as bytes.
 5. When a pipeline works and is likely to be reused, save_pipeline, then
    suggest crystallizing it to the human.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
+
+
+class OperatorExample(BaseModel):
+    """Applying operator `ref` to `input` must return `output`."""
+
+    ref: str
+    input: JsonValue = None
+    output: JsonValue = None
+
+
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 
 
 def create_server(config: Config) -> MCPServer[None]:
     """The ico-mcp server for a repository."""
     kernel = KernelClient(config)
+    proposing = anyio.Lock()
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[None]) -> AsyncGenerator[None]:
@@ -94,6 +107,35 @@ def create_server(config: Config) -> MCPServer[None]:
         Read the source only to write or fix an operator, not to use one.
         """
         return await call("card", {"ref": ref})
+
+    @server.tool(annotations=WRITES)
+    async def propose_operator(
+        module: str,
+        code: str,
+        typecheck: bool = True,
+        examples: list[OperatorExample] | None = None,
+    ) -> dict[str, JsonValue]:
+        """Add or replace a draft operator module, then reload the operators.
+
+        Stages: write `<draft package>/<module>.py`, typecheck (pyright),
+        load, register (at least one operator, no `Any` in signatures),
+        examples. The first failing stage is reported with diagnostics; the
+        file stays so that it can be fixed with another proposal. Operator
+        source does not set `status`: drafts are `draft`.
+        """
+        given = [Example(e.ref, e.input, e.output) for e in examples or []]
+        async with proposing:
+            try:
+                return await propose(
+                    config,
+                    kernel,
+                    module=module,
+                    code=code,
+                    check_types=typecheck,
+                    examples=given,
+                )
+            except ProposalError as e:
+                raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
 
     @server.tool(annotations=READ_ONLY)
     async def validate(spec: dict[str, JsonValue]) -> dict[str, JsonValue]:

@@ -51,7 +51,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    The final state of every node goes into the run trace; the other nodes
    are shown by the dashboard (item 9). Needs apriori3d/ico#24 (`run`
    tools, initial snapshots on activation).
-6. [ ] `propose_operator`: stages write → typecheck (pyright, file only,
+6. [x] `propose_operator`: stages write → typecheck (pyright, file only,
    on by default) → load → register → examples, structured stage reports.
 7. [ ] `crystallize`: branch, move drafts to stable, tests from examples,
    gate (pyright strict, tests, validate pipelines), commit, push,

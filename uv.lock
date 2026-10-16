@@ -224,11 +224,11 @@ dependencies = [
     { name = "anyio" },
     { name = "ico" },
     { name = "mcp" },
+    { name = "pyright" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -238,11 +238,11 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.15" },
     { name = "ico", editable = "../ico" },
     { name = "mcp", specifier = ">=2.3.0" },
+    { name = "pyright", specifier = ">=1.1.414" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.17.1" },
 ]

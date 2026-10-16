@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import re
 import sys
 import threading
 import traceback
@@ -37,6 +38,8 @@ from ico_mcp.type_names import TypeIndex
 
 DEFAULT_SEARCH_LIMIT = 20
 TRACEBACK_LIMIT = 4000
+
+_ANY = re.compile(r"\bAny\b")
 
 Handler = Callable[[JsonObject], JsonValue]
 Notify = Callable[[JsonObject], None]
@@ -60,6 +63,7 @@ class Kernel:
             "load": self.load,
             "search": self.search,
             "card": self.card,
+            "module_cards": self.module_cards,
             "validate": self.validate,
             "run": self.run,
         }
@@ -118,6 +122,19 @@ class Kernel:
                 "not_found", f"operator {ref!r} is not registered"
             ) from None
         return {**entry.card(), "module": entry.module, "source": _source(entry)}
+
+    def module_cards(self, params: JsonObject) -> JsonValue:
+        """Cards of the operators a module registers, and the refs whose
+        signature has ``Any`` (as formatted in ``sig``)."""
+        module = _required(params, "module", str)
+        entries = [entry for entry in default_registry if entry.module == module]
+        cards: list[JsonValue] = []
+        cards.extend(entry.card() for entry in entries)
+        any_refs: list[JsonValue] = []
+        any_refs.extend(
+            entry.ref for entry in entries if _ANY.search(entry.signature.format())
+        )
+        return {"cards": cards, "any": any_refs}
 
     def validate(self, params: JsonObject) -> JsonValue:
         try:

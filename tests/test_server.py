@@ -23,6 +23,7 @@ TOOLS = {
     "list_pipelines",
     "get_pipeline",
     "reload",
+    "propose_operator",
 }
 
 

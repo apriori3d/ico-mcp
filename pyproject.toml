@@ -10,6 +10,8 @@ dependencies = [
     "anyio>=4.15",
     "ico",
     "mcp>=2.3.0",
+    # Type-checks proposed operators at run time (propose_operator).
+    "pyright>=1.1.414",
 ]
 
 [project.scripts]
@@ -17,7 +19,6 @@ ico-mcp = "ico_mcp.server:main"
 
 [dependency-groups]
 dev = [
-    "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.17.1",
 ]

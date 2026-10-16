@@ -70,7 +70,7 @@ ico-mcp/                     # clone → e.g. mydomain-mcp
   domain_draft/              # drafts written by the agent (package)
     __init__.py
   pipelines/<name>.spec.json # saved, validated specs
-  examples/<op>.json         # examples for JSON-io operators
+  examples/<op>.json         # examples for JSON-io operators (<name>@<version>)
   runs/YYYY-MM-DD.jsonl      # traces (gitignored)
   ico.toml
   pyproject.toml             # a clone adds its domain dependencies here
@@ -133,17 +133,25 @@ where applicable:
    Replacing an existing draft module is allowed; a module name that exists
    in the stable package is rejected.
 2. **typecheck** (default on): pyright in the configured mode on that file
-   only, using the repository environment. Pyright's node part is
-   pre-fetched at install/image build time.
+   only, using the repository environment, with the `validate` timeout.
+   Errors fail the stage; warnings are returned with the result. Pyright
+   is a runtime dependency; its node part is pre-fetched at install/image
+   build time.
 3. **load**: restart the kernel; load errors of that module are reported.
 4. **register**: the module registers at least one operator; no signature
    is inferred as `Any`.
-5. **examples**: for JSON-io operators, each `{"input", "output"}` example
-   must pass. Operators with domain types (e.g. `Image`) are exercised
+5. **examples**: for JSON-io operators, each `{"ref", "input", "output"}`
+   example must pass: running `ref` on `input` gives exactly one output
+   equal to `output`. Passed examples are saved to
+   `examples/<name>@<version>.json` (replaced by the next proposal with
+   examples for that ref); `crystallize` turns them into tests. Operators
+   with domain types (e.g. `Image`) or iterator outputs are exercised
    through pipeline runs instead.
 
-On failure the file stays in the draft package so the agent can read and fix
-it, but its entries are not loaded.
+On failure the file stays in the draft package so the agent can read and
+fix it with another proposal. Nothing is rolled back: whatever of the file
+loads stays loaded, and the entries of a replaced version are gone until
+the module is fixed.
 
 ### `crystallize`
 
