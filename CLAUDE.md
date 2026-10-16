@@ -31,7 +31,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
 1. [x] Scaffold: `uv` project, `ico` as a path dependency on `../ico`
    (editable) for development, official Python MCP SDK, ruff, pyright
    strict, pytest, `Makefile` with `ci`.
-2. [ ] Repository layout: `ico.toml` loading and validation; empty
+2. [x] Repository layout: `ico.toml` loading and validation; empty
    `domain/` and `domain_draft/` packages, `pipelines/`, `examples/`,
    `runs/` (gitignored) as in the design doc. No `init` command: the
    repository itself is the template.

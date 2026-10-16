@@ -15,5 +15,9 @@ htmlcov/
 # OS
 .DS_Store
 
-# Generated flow specs
-*.spec.json
+# Run traces
+runs/
+
+# Agent drafts (crystallize moves them into the stable package)
+domain_draft/*
+!domain_draft/__init__.py

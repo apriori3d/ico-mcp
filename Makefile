@@ -3,11 +3,11 @@
 ci: lint typecheck test
 
 lint:
-	uv run ruff check src/ tests/
-	uv run ruff format --check src/ tests/
+	uv run ruff check src/ tests/ domain/
+	uv run ruff format --check src/ tests/ domain/
 
 format:
-	uv run ruff format src/ tests/
+	uv run ruff format src/ tests/ domain/
 
 typecheck:
 	uv run pyright
