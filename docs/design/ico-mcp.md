@@ -13,9 +13,10 @@ Key principles (decided):
 
 - Operators are **not** MCP tools. The tool set is fixed; the agent sees
   operators only as compact cards returned by search.
-- The server is domain-agnostic. Domain work lives in a **workspace**
-  (a separate git repository, may be private). Later the workspace layout
-  becomes the domain template.
+- **This repository is the template.** It contains the domain-agnostic
+  server and kernel plus empty domain packages. A domain MCP is a clone of
+  it: operators, pipelines and domain dependencies live in the clone, and
+  crystallization PRs go to the clone's own repository (may be private).
 - JSON boundary, data by reference: inputs and outputs are JSON; images,
   videos and other large data are passed as paths or URIs, never as bytes
   through the agent's context. `run` is `ico.spec.run` from core.
@@ -34,9 +35,9 @@ agent ── stdio (MCP) ──► server ── JSON lines over pipes ──►
 ```
 
 - **Server** (long-lived): MCP protocol (official Python MCP SDK, stdio
-  transport only), workspace files, pyright, git and `gh`, run traces. It
+  transport only), repository files, pyright, git and `gh`, run traces. It
   never imports operator code.
-- **Kernel** (child process, restartable): imports the workspace operator
+- **Kernel** (child process, restartable): imports the domain operator
   packages with `ico.registry.load_operators`, holds the registry and
   executes `search`, `card`, `validate`, `run`.
 
@@ -57,34 +58,47 @@ kills and restarts the kernel and returns a `timeout` error.
 The kernel's environment is an allowlist: secrets in the server's
 environment are not passed to it unless listed in `ico.toml`.
 
-## Workspace
+## Repository layout
+
+The repository root is the domain root; cloning is the initialization.
 
 ```
-<workspace>/                  # git repo with a GitHub remote
+ico-mcp/                     # clone → e.g. mydomain-mcp
+  src/ico_mcp/               # server and kernel (domain-agnostic)
+  domain/                    # stable operators and types (package)
+    __init__.py
+  domain_draft/              # drafts written by the agent (package)
+    __init__.py
+  pipelines/<name>.spec.json # saved, validated specs
+  examples/<op>.json         # examples for JSON-io operators
+  runs/YYYY-MM-DD.jsonl      # traces (gitignored)
   ico.toml
-  <pkg>/                      # stable operators and types (package)
-    __init__.py
-  <pkg>_draft/                # drafts written by the agent (package)
-    __init__.py
-  pipelines/<name>.spec.json  # saved, validated specs
-  examples/<op>.json          # examples for JSON-io operators
-  runs/YYYY-MM-DD.jsonl       # traces (gitignored)
+  pyproject.toml             # a clone adds its domain dependencies here
 ```
 
 `ico.toml` (minimal):
 
 ```toml
-name = "mydomain"
-package = "mydomain"           # stable package; drafts in mydomain_draft
-python = ".venv/bin/python"    # interpreter for the kernel (workspace deps)
-github = { repo = "owner/mydomain", base = "main" }
+name = "domain"
+package = "domain"             # stable package; drafts in domain_draft
+github = { repo = "owner/domain-mcp", base = "main" }
 timeouts = { run = 600, validate = 30, load = 60 }
 env = ["HF_HOME"]              # variables passed to the kernel
 typecheck = "strict"           # pyright mode for drafts
 ```
 
-The kernel runs with the workspace's own interpreter, so domain dependencies
-(e.g. torch, model libraries) belong to the workspace, not to ico-mcp.
+One environment: the kernel is a separate process but runs with the same
+interpreter (`sys.executable`) and `.venv` as the server, so domain
+dependencies (e.g. torch, model libraries) are added to the clone's
+`pyproject.toml`.
+
+**Specializing a clone:** rename `domain` / `domain_draft` and set `name`,
+`package` and `github` in `ico.toml`; the README documents these steps.
+
+**Trade-off:** server fixes do not reach clones automatically; a clone
+pulls them from the upstream template with git. Fine for one or two
+domains. With a second or third domain, the server moves into a package and
+the template into `copier` (see "Deferred").
 
 **Status comes from location.** Operator source does not set `status`.
 Modules in `<pkg>_draft` load as `draft`, modules in `<pkg>` as `stable`.
@@ -119,7 +133,7 @@ where applicable:
    Replacing an existing draft module is allowed; a module name that exists
    in the stable package is rejected.
 2. **typecheck** (default on): pyright in the configured mode on that file
-   only, using the workspace interpreter. Pyright's node part is
+   only, using the repository environment. Pyright's node part is
    pre-fetched at install/image build time.
 3. **load**: restart the kernel; load errors of that module are reported.
 4. **register**: the module registers at least one operator; no signature
@@ -135,7 +149,7 @@ it, but its entries are not loaded.
 
 Prepares a human review as a GitHub pull request:
 
-1. Check: refs are drafts; the workspace tree is clean; `gh` is installed
+1. Check: refs are drafts; the working tree is clean; `gh` is installed
    and authenticated (otherwise an error with setup instructions).
 2. Create branch `crystallize/<slug>` from `github.base`.
 3. Move the modules of the refs (and the draft types they need) from
@@ -230,5 +244,7 @@ token and time savings depend on it:
 - Domain tools published from saved pipelines.
 - Container isolation and enforced `caps`.
 - HTTP transport, multiple users.
-- Workspace template (`copier`), entry points for installed domain packages.
+- Server as a package and the template as `copier`, so server fixes reach
+  clones by a version bump. Revisit with the second or third domain.
+- Entry points for installed domain packages.
 - Resources in specs, context nodes (see ico `docs/design/spec.md`).

@@ -13,7 +13,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
   remotes are local bare repos, `gh` is replaced by a fake executable.
 - All code passes `pyright` in strict mode, `ruff`, and `pytest`
   (`make ci`). Public API types must never be inferred as `Any`.
-- The server never imports workspace operator code; only the kernel does.
+- The server never imports domain operator code; only the kernel does.
 - YAGNI: implement only what the current item and its tests need. No new
   extension points or config options until there is a second real use
   case. If a design grows beyond the item, stop and ask.
@@ -31,9 +31,11 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
 1. [x] Scaffold: `uv` project, `ico` as a path dependency on `../ico`
    (editable) for development, official Python MCP SDK, ruff, pyright
    strict, pytest, `Makefile` with `ci`.
-2. [ ] Workspace: `ico.toml` loading and validation, layout from the design
-   doc, `ico-mcp init <dir>` creating an empty workspace.
-3. [ ] Kernel: child process with the workspace interpreter, JSON-lines
+2. [ ] Repository layout: `ico.toml` loading and validation; empty
+   `domain/` and `domain_draft/` packages, `pipelines/`, `examples/`,
+   `runs/` (gitignored) as in the design doc. No `init` command: the
+   repository itself is the template.
+3. [ ] Kernel: child process with the same interpreter (`sys.executable`), JSON-lines
    protocol, start / restart / timeout kill, env allowlist; methods
    `load`, `search`, `card`, `validate`, `run`; short type names with
    ambiguity errors. Tested without MCP.
@@ -68,7 +70,8 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    the Python MCP SDK supports MCP Apps; otherwise set `_meta` and the MIME
    type manually.
 10. [ ] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
-   the desktop app; README with the workflow.
+   the desktop app; README with the workflow; how to
+    specialize a clone (rename `domain` / `domain_draft`, set `ico.toml`).
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
