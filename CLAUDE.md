@@ -39,7 +39,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    protocol, start / restart / timeout kill, env allowlist; methods
    `load`, `search`, `card`, `validate`, `run`; short type names with
    ambiguity errors. Tested without MCP.
-4. [ ] MCP server (stdio): tools `search_operators`, `get_operator`,
+4. [x] MCP server (stdio): tools `search_operators`, `get_operator`,
    `validate`, `run`, `save_pipeline`, `list_pipelines`, `get_pipeline`,
    `reload`; server `instructions`; run traces in `runs/`. Tested with an
    in-process MCP client.

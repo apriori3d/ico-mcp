@@ -1,125 +1,21 @@
 import os
 import subprocess
 import sys
-import textwrap
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import anyio
 import pytest
 
-from ico_mcp.config import Config, load_config
+from ico_mcp.config import Config
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, KernelError
 
+MakeRepo = Callable[..., Config]
+
 pytestmark = pytest.mark.anyio
-
-STABLE = '''
-from dataclasses import dataclass
-
-from ico.registry import register
-
-
-@dataclass
-class Report:
-    words: int
-
-
-@register("count_words", 1, tags={"text"})
-def count_words(text: str) -> int:
-    """Count the words of a text."""
-    return len(text.split())
-
-
-@register("split_words", 1, tags={"text"})
-def split_words(text: str) -> list[str]:
-    """Split a text into words."""
-    return text.split()
-
-
-@register("make_report", 1)
-def make_report(words: int) -> Report:
-    """Wrap a word count into a report."""
-    return Report(words)
-'''
-
-DRAFT = '''
-import os
-import subprocess
-import sys
-import time
-from dataclasses import dataclass
-
-from ico.registry import register
-
-
-@dataclass
-class Report:
-    title: str
-
-
-@register("shout", 1, tags={"text"})
-def shout(text: str) -> str:
-    """Upper-case a text, printing noise to stdout."""
-    print("noise on stdout")
-    return text.upper()
-
-
-@register("title_report", 1)
-def title_report(text: str) -> Report:
-    """A report with a title."""
-    return Report(text)
-
-
-@register("fail", 1)
-def fail(text: str) -> str:
-    """Always raise."""
-    raise RuntimeError("boom")
-
-
-@register("hang", 1)
-def hang(pid_file: str) -> str:
-    """Start a worker process, record its pid and hang."""
-    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-    with open(pid_file, "w") as f:
-        f.write(str(worker.pid))
-    time.sleep(60)
-    return pid_file
-
-
-@register("crash", 1)
-def crash(text: str) -> str:
-    """Exit the process."""
-    print("dying", flush=True)
-    os._exit(3)
-
-
-@register("getenv", 1)
-def getenv(name: str) -> str:
-    """Read an environment variable."""
-    return os.environ.get(name, "<unset>")
-'''
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
-def make_repo(root: Path, toml_extra: str = "") -> Config:
-    for package, source in (("domain", STABLE), ("domain_draft", DRAFT)):
-        (root / package).mkdir(parents=True)
-        (root / package / "__init__.py").write_text("")
-        name = "text" if package == "domain" else "tools"
-        (root / package / f"{name}.py").write_text(textwrap.dedent(source))
-    (root / "ico.toml").write_text('name = "demo"\npackage = "domain"\n' + toml_extra)
-    return load_config(root)
-
-
-@pytest.fixture
-def config(tmp_path: Path) -> Config:
-    return make_repo(tmp_path)
 
 
 def op(ref: str) -> JsonObject:
@@ -310,7 +206,9 @@ async def test_run_error_and_spec_error(config: Config) -> None:
 # ─── Process control ───
 
 
-async def test_timeout_kills_kernel_and_its_workers(tmp_path: Path) -> None:
+async def test_timeout_kills_kernel_and_its_workers(
+    tmp_path: Path, make_repo: MakeRepo
+) -> None:
     config = make_repo(tmp_path / "repo", "timeouts = { run = 1 }\n")
     pid_file = tmp_path / "worker.pid"
 
@@ -342,7 +240,7 @@ async def test_crash_is_reported_and_kernel_restarts(config: Config) -> None:
 
 
 async def test_env_is_an_allowlist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = make_repo(tmp_path, 'env = ["ICO_TEST_ALLOWED"]\n')
     monkeypatch.setenv("ICO_TEST_ALLOWED", "yes")
