@@ -35,7 +35,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    `domain/` and `domain_draft/` packages, `pipelines/`, `examples/`,
    `runs/` (gitignored) as in the design doc. No `init` command: the
    repository itself is the template.
-3. [ ] Kernel: child process with the same interpreter (`sys.executable`), JSON-lines
+3. [x] Kernel: child process with the same interpreter (`sys.executable`), JSON-lines
    protocol, start / restart / timeout kill, env allowlist; methods
    `load`, `search`, `card`, `validate`, `run`; short type names with
    ambiguity errors. Tested without MCP.

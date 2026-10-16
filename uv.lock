@@ -221,6 +221,7 @@ name = "ico-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "ico" },
     { name = "mcp" },
 ]
@@ -234,6 +235,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.15" },
     { name = "ico", editable = "../ico" },
     { name = "mcp", specifier = ">=2.3.0" },
 ]
