@@ -1,0 +1,14 @@
+{
+    "typeCheckingMode": "strict",
+    "include": [
+        "src",
+        "tests"
+    ],
+    "venvPath": ".",
+    "venv": ".venv",
+    "reportMissingTypeArgument": true,
+    "reportUnknownMemberType": true,
+    "reportUnknownArgumentType": true,
+    "reportUnknownVariableType": true,
+    "reportUnknownParameterType": true
+}

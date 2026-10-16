@@ -28,7 +28,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
 0. [x] ICO core prerequisite (in `../ico`): `load_operators(path, status=...)`
    overrides the status of entries loaded from that package (draft vs
    stable is decided by location). Tests there. (apriori3d/ico#23)
-1. [ ] Scaffold: `uv` project, `ico` as a path dependency on `../ico`
+1. [x] Scaffold: `uv` project, `ico` as a path dependency on `../ico`
    (editable) for development, official Python MCP SDK, ruff, pyright
    strict, pytest, `Makefile` with `ci`.
 2. [ ] Workspace: `ico.toml` loading and validation, layout from the design
