@@ -167,28 +167,31 @@ Prepares a human review as a GitHub pull request:
 
 Every `run` appends one line to `runs/YYYY-MM-DD.jsonl`: timestamp, spec,
 input, summary of the result (counts, truncated outputs), errors with spec
-paths, duration, refs used. Traces feed `crystallize`. No automatic status
+paths, duration, refs used, final progress of each node. Traces feed `crystallize`. No automatic status
 promotion in the MVP.
 
 ### Progress
 
 The console progress rendering of ICO (`RichProgressTool`) is replaced by
-MCP progress notifications. When the client sends a progress token with a
-`run` request, the kernel attaches `JsonProgressTool` (ICO core): a runtime
-tool that resolves user-friendly labels from the runtime tree and emits
-throttled JSON snapshots. The kernel streams them as protocol
-notifications; the server forwards them as MCP progress notifications. One
-notification carries one `progress` / `total` / `message`, so the
-outermost progress node gives `progress` and `total`, and other nodes are
-summarized in `message`, e.g. "inpaint 120/900 · detect 300/900".
+MCP progress notifications. The kernel attaches `JsonProgressTool` (ICO
+core) to every `run`: a runtime tool that resolves user-friendly labels from
+the runtime tree and emits throttled JSON snapshots, and on activation
+reports every progress node once with `done = 0`, in flow order. The kernel
+streams the snapshots as protocol notifications.
 
 MCP constraints (spec, "Progress"): one progress token per request, so one
 stream per `run`; no nesting; `progress` must increase with every
-notification; `total` is optional; rate limiting is expected. Nested
-progress is therefore flattened into one monotonic scalar: for an outer
-node with an inner node that restarts (e.g. epochs × batches),
-`progress = outer_done + inner_done / inner_total`, `total = outer_total`.
-Per-node detail lives only in `message` and in the run trace.
+notification; `total` is optional; rate limiting is expected. The status is
+therefore the **first progress node** of the flow (the first snapshot):
+`progress` / `total` are its `done` / `total`, `message` is
+`"<label> <done>/<total>"`. A notification that would not increase
+`progress` (the node restarts in a loop) is skipped. Runtime keys are flat
+paths, so nesting is not inferred; the order of nodes in the flow decides.
+Other nodes are not reported as MCP progress: their final state goes into
+the run trace, and the dashboard shows them all.
+
+The server always forwards the status to the SDK, which sends nothing when
+the client did not send a progress token.
 
 These notifications are mainly for the human in the client UI; the model
 usually does not read them. Client support varies and must be checked

@@ -43,13 +43,14 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    `validate`, `run`, `save_pipeline`, `list_pipelines`, `get_pipeline`,
    `reload`; server `instructions`; run traces in `runs/`. Tested with an
    in-process MCP client.
-5. [ ] Progress: when the client sends a progress token with `run`, the
-   kernel attaches `ico`'s `JsonProgressTool` and streams its snapshots as
-   protocol notifications; the server forwards them as MCP progress
-   notifications (`progress` / `total` from the aggregate, `message` with
-   the per-node summary, e.g. "inpaint 120/900 · detect 300/900").
-   Without a token nothing is sent. The final progress summary goes into
-   the run trace.
+5. [x] Progress: the kernel attaches `ico`'s `JsonProgressTool` to every
+   `run` and streams its snapshots as protocol notifications; the server
+   reports the first progress node of the flow as MCP progress
+   (`progress` / `total` = its `done` / `total`, `message` e.g.
+   "inpaint 120/900"). The SDK sends nothing without a progress token.
+   The final state of every node goes into the run trace; the other nodes
+   are shown by the dashboard (item 9). Needs apriori3d/ico#24 (`run`
+   tools, initial snapshots on activation).
 6. [ ] `propose_operator`: stages write → typecheck (pyright, file only,
    on by default) → load → register → examples, structured stage reports.
 7. [ ] `crystallize`: branch, move drafts to stable, tests from examples,

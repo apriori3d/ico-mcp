@@ -179,6 +179,28 @@ async def test_run_returns_outputs(config: Config) -> None:
     }
 
 
+async def test_run_streams_progress_notifications(
+    config: Config, progress_spec_of: Callable[[int], JsonObject]
+) -> None:
+    notifications: list[JsonObject] = []
+
+    async def collect(message: JsonObject) -> None:
+        notifications.append(message)
+
+    async with KernelClient(config) as kernel:
+        result = await kernel.request(
+            "run",
+            {"spec": progress_spec_of(3), "input": "a b c"},
+            on_notification=collect,
+        )
+
+    assert cast(dict[str, Any], result)["outputs"] == ["A", "B", "C"]
+    assert all(n["method"] == "progress" for n in notifications)
+    snapshots = [cast(dict[str, Any], n["params"])["snapshot"] for n in notifications]
+    assert (snapshots[0]["label"], snapshots[0]["done"]) == ("words", 0)
+    assert (snapshots[-1]["done"], snapshots[-1]["total"]) == (3, 3)
+
+
 async def test_operator_stdout_does_not_break_the_protocol(config: Config) -> None:
     async with KernelClient(config) as kernel:
         result = await request(kernel, "run", {"spec": op("shout@1"), "input": "hi"})

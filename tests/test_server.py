@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -119,6 +120,35 @@ async def test_run_writes_traces_for_success_and_failure(config: Config) -> None
     assert bad["ok"] is False
     assert bad["error"]["code"] == failed["code"] == "run_error"
     assert bad["result"] is None
+    assert ok["progress"] == bad["progress"] == []
+
+
+async def test_run_reports_the_first_progress_node(
+    config: Config, progress_spec_of: Callable[[int], dict[str, Any]]
+) -> None:
+    updates: list[tuple[float, float | None, str | None]] = []
+
+    async def on_progress(
+        progress: float, total: float | None, message: str | None
+    ) -> None:
+        updates.append((progress, total, message))
+
+    async with Client(create_server(config)) as client:
+        result = await client.call_tool(
+            "run",
+            {"spec": progress_spec_of(4), "input": "a b c d"},
+            progress_callback=on_progress,
+        )
+        without_token = await call(client, "run", spec=progress_spec_of(4), input="e f")
+
+    assert not result.is_error
+    assert updates[0] == (0, 4, "words 0/4")
+    assert updates[-1] == (4, 4, "words 4/4")
+    values = [u[0] for u in updates]
+    assert values == sorted(set(values))  # strictly increasing
+    assert without_token["outputs"] == ["E", "F"]
+    first, _ = traces(config)
+    assert first["progress"] == [{"key": "0", "label": "words", "done": 4, "total": 4}]
 
 
 async def test_save_list_get_pipeline(config: Config) -> None:

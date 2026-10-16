@@ -26,8 +26,12 @@ def write(
     input: JsonValue,
     result: JsonObject | None,
     error: JsonObject | None,
+    progress: list[JsonValue],
 ) -> Path:
-    """Append a trace line for one run; ``started`` must be timezone-aware."""
+    """Append a trace line for one run; ``started`` must be timezone-aware.
+
+    ``progress`` is the final state of each progress node.
+    """
     started = started.astimezone(UTC)
     trace: JsonObject = {
         "ts": started.isoformat().replace("+00:00", "Z"),
@@ -38,6 +42,7 @@ def write(
         "ok": error is None,
         "result": _summary(result) if result is not None else None,
         "error": cast(JsonObject, _shorten(error)) if error is not None else None,
+        "progress": progress,
     }
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{started:%Y-%m-%d}.jsonl"

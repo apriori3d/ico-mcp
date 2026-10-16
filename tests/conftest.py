@@ -44,6 +44,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from ico.registry import register
@@ -90,6 +91,12 @@ def crash(text: str) -> str:
     os._exit(3)
 
 
+@register("words", 1)
+def words(text: str) -> Iterator[str]:
+    """Iterate over the words of a text."""
+    return iter(text.split())
+
+
 @register("getenv", 1)
 def getenv(name: str) -> str:
     """Read an environment variable."""
@@ -121,3 +128,26 @@ def make_repo() -> MakeRepo:
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
     return _make_repo(tmp_path)
+
+
+def progress_spec(total: int) -> dict[str, object]:
+    """``words@1`` then a stream of ``shout@1`` behind a progress node."""
+    body = {
+        "kind": "seq",
+        "children": [
+            {"kind": "progress", "name": "words", "params": {"total": total}},
+            {"kind": "op", "op": "shout@1"},
+        ],
+    }
+    return {
+        "kind": "seq",
+        "children": [
+            {"kind": "op", "op": "words@1"},
+            {"kind": "stream", "children": [body]},
+        ],
+    }
+
+
+@pytest.fixture
+def progress_spec_of() -> Callable[[int], dict[str, object]]:
+    return progress_spec

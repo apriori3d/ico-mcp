@@ -7,10 +7,12 @@ runs in the kernel process.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import signal
 import sys
 import tempfile
+from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import IO, Self
 
@@ -26,6 +28,11 @@ BASE_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "VIRTUAL_ENV")
 
 MAX_LINE = 256 * 1024 * 1024
 STDERR_TAIL = 8 * 1024
+
+OnNotification = Callable[[JsonObject], Awaitable[None]]
+"""Receives kernel notifications (e.g. ``progress``) while a request runs."""
+
+logger = logging.getLogger(__name__)
 
 
 class KernelClient:
@@ -73,8 +80,18 @@ class KernelClient:
             await self._stop()
             return await self._spawn()
 
-    async def request(self, method: str, params: JsonObject | None = None) -> JsonValue:
+    async def request(
+        self,
+        method: str,
+        params: JsonObject | None = None,
+        *,
+        on_notification: OnNotification | None = None,
+    ) -> JsonValue:
         """Send a request, starting the kernel if needed.
+
+        Notifications the kernel sends before the response are passed to
+        ``on_notification``; its errors are logged and ignored, since
+        notifications are best-effort.
 
         Raises:
             KernelError: The error returned by the kernel, ``timeout`` (the
@@ -84,7 +101,7 @@ class KernelClient:
             if not self.running:
                 await self._stop()
                 await self._spawn()
-            return await self._call(method, params or {})
+            return await self._call(method, params or {}, on_notification)
 
     async def aclose(self) -> None:
         async with self._lock:
@@ -106,7 +123,12 @@ class KernelClient:
         self._stdout = BufferedByteReceiveStream(self._process.stdout)
         return await self._call("load", {})
 
-    async def _call(self, method: str, params: JsonObject) -> JsonValue:
+    async def _call(
+        self,
+        method: str,
+        params: JsonObject,
+        on_notification: OnNotification | None = None,
+    ) -> JsonValue:
         process, stdout = self._process, self._stdout
         assert process is not None and process.stdin is not None and stdout is not None
         self._next_id += 1
@@ -117,7 +139,12 @@ class KernelClient:
                 await process.stdin.send(
                     encode({"id": request_id, "method": method, "params": params})
                 )
-                line = await stdout.receive_until(b"\n", MAX_LINE)
+                while True:
+                    message = decode(await stdout.receive_until(b"\n", MAX_LINE))
+                    if "id" in message:
+                        break
+                    if on_notification is not None:
+                        await _notify(on_notification, message)
         except TimeoutError:
             await self._stop()
             raise KernelError(
@@ -128,15 +155,17 @@ class KernelClient:
             ) from None
         except (anyio.EndOfStream, anyio.IncompleteRead, anyio.BrokenResourceError):
             raise await self._crashed(method) from None
-
-        response = decode(line)
-        if response.get("id") != request_id:
+        except KernelError as e:  # not a JSON line: the protocol is broken
             await self._stop()
-            raise KernelError("internal", f"unexpected kernel response: {response!r}")
-        error = response.get("error")
+            raise KernelError("internal", f"invalid kernel output: {e}") from None
+
+        if message.get("id") != request_id:
+            await self._stop()
+            raise KernelError("internal", f"unexpected kernel response: {message!r}")
+        error = message.get("error")
         if isinstance(error, dict):
             raise KernelError.from_dict(error)
-        return response.get("result")
+        return message.get("result")
 
     async def _crashed(self, method: str) -> KernelError:
         process = self._process
@@ -184,3 +213,10 @@ class KernelClient:
     def _env(self) -> dict[str, str]:
         names = (*BASE_ENV, *self.config.env)
         return {name: os.environ[name] for name in names if name in os.environ}
+
+
+async def _notify(on_notification: OnNotification, message: JsonObject) -> None:
+    try:
+        await on_notification(message)
+    except Exception:
+        logger.exception("kernel notification handler failed")

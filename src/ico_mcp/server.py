@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import cast
 
 import anyio
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import JsonValue
@@ -25,6 +25,7 @@ from pydantic import JsonValue
 from ico_mcp import pipelines, traces
 from ico_mcp.config import Config, ConfigError, load_config
 from ico_mcp.kernel_client import KernelClient
+from ico_mcp.progress import ProgressReporter
 from ico_mcp.protocol import JsonObject, KernelError
 
 INSTRUCTIONS = """\
@@ -101,22 +102,39 @@ def create_server(config: Config) -> MCPServer[None]:
 
     @server.tool(annotations=WRITES)
     async def run(
+        ctx: Context,
         spec: dict[str, JsonValue],
         input: JsonValue = None,
         max_items: int | None = None,
     ) -> dict[str, JsonValue]:
         """Run a spec once on a JSON input; returns outputs and per-item errors.
 
-        Large data goes by reference: pass paths, get paths back.
+        Large data goes by reference: pass paths, get paths back. With a
+        progress token, the first progress node of the flow is reported.
         """
         params: JsonObject = {"spec": spec, "input": input}
         if max_items is not None:
             params["max_items"] = max_items
+        reporter = ProgressReporter()
+
+        async def on_notification(message: JsonObject) -> None:
+            body = message.get("params")
+            if message.get("method") != "progress" or not isinstance(body, dict):
+                return
+            snapshot = body.get("snapshot")
+            status = reporter.update(snapshot) if isinstance(snapshot, dict) else None
+            if status is not None:
+                # A no-op unless the client sent a progress token.
+                await ctx.report_progress(status.progress, status.total, status.message)
+
         started, clock = datetime.now(UTC), time.monotonic()
         result: JsonObject | None = None
         error: JsonObject | None = None
         try:
-            result = cast(JsonObject, await kernel.request("run", params))
+            result = cast(
+                JsonObject,
+                await kernel.request("run", params, on_notification=on_notification),
+            )
         except KernelError as e:
             error = e.to_dict()
         traces.write(
@@ -127,6 +145,7 @@ def create_server(config: Config) -> MCPServer[None]:
             input=input,
             result=result,
             error=error,
+            progress=reporter.summary(),
         )
         if error is not None:
             raise ToolError(json.dumps(error, ensure_ascii=False))

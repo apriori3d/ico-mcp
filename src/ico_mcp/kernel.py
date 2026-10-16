@@ -2,9 +2,16 @@
 
 Started by :class:`ico_mcp.kernel_client.KernelClient` as
 ``python -m ico_mcp.kernel <root>``. It reads protocol requests from stdin
-and writes responses to the original stdout. File descriptor 1 is
-redirected to stderr first, so output of operators (``print``, child
-processes) never corrupts the protocol.
+and writes responses and notifications to the original stdout. File
+descriptor 1 is redirected to stderr first, so output of operators
+(``print``, child processes) never corrupts the protocol.
+
+Notification (no ``id``), sent while a ``run`` request is in progress::
+
+    {"method": "progress", "params": {"request": <id>, "snapshot": {...}}}
+
+``snapshot`` is a ``JsonProgressTool`` snapshot; every progress node is
+first reported with ``done = 0``, in flow order.
 """
 
 from __future__ import annotations
@@ -12,12 +19,13 @@ from __future__ import annotations
 import inspect
 import os
 import sys
+import threading
 import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any, cast
 
-from ico import IcoOperator, SignatureIssue, validate_signatures
+from ico import IcoOperator, JsonProgressTool, SignatureIssue, validate_signatures
 from ico.core.signature_utils import format_ico_type  # pyright: ignore[reportMissingTypeStubs]  # ico.core is a namespace package
 from ico.registry import RegistryEntry, default_registry, load_operators
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run
@@ -31,13 +39,22 @@ DEFAULT_SEARCH_LIMIT = 20
 TRACEBACK_LIMIT = 4000
 
 Handler = Callable[[JsonObject], JsonValue]
+Notify = Callable[[JsonObject], None]
+ProgressSnapshot = dict[str, str | float | None]  # see JsonProgressTool
 
 
 class Kernel:
-    """Request handlers over the default registry."""
+    """Request handlers over the default registry.
 
-    def __init__(self, config: Config) -> None:
+    Args:
+        config: The repository configuration.
+        notify: Sends a notification; may be called from other threads.
+    """
+
+    def __init__(self, config: Config, notify: Notify) -> None:
         self.config = config
+        self.notify = notify
+        self.request_id: JsonValue = None
         self.types = TypeIndex(())
         self.handlers: dict[str, Handler] = {
             "load": self.load,
@@ -52,7 +69,7 @@ class Kernel:
         request_id: JsonValue = None
         try:
             request = decode(line)
-            request_id = request.get("id")
+            request_id = self.request_id = request.get("id")
             method = request.get("method")
             params = request.get("params", {})
             handler = self.handlers.get(method) if isinstance(method, str) else None
@@ -115,8 +132,11 @@ class Kernel:
     def run(self, params: JsonObject) -> JsonValue:
         spec = _spec(params)
         max_items = _positive_int(params, "max_items", DEFAULT_MAX_ITEMS)
+        progress = JsonProgressTool(self._progress(self.request_id))
         try:
-            result = run(spec, params.get("input"), max_items=max_items)
+            result = run(
+                spec, params.get("input"), max_items=max_items, tools=[progress]
+            )
         except SpecError as e:
             raise KernelError("spec_error", str(e), _spec_error(e)) from None
         except Exception as e:
@@ -124,6 +144,13 @@ class Kernel:
                 "run_error", f"{type(e).__name__}: {e}", _traceback(e)
             ) from None
         return result.to_dict()
+
+    def _progress(self, request_id: JsonValue) -> Callable[[ProgressSnapshot], None]:
+        def send(snapshot: ProgressSnapshot) -> None:
+            params: JsonObject = {"request": request_id, "snapshot": dict(snapshot)}
+            self.notify({"method": "progress", "params": params})
+
+        return send
 
 
 # ─── Params ───
@@ -213,11 +240,17 @@ def _traceback(e: BaseException) -> JsonObject:
 
 def serve(root: Path, stdin: IO[str], stdout: IO[str]) -> None:
     """Answer requests from ``stdin`` until it closes."""
-    kernel = Kernel(load_config(root))
+    lock = threading.Lock()
+
+    def write(message: JsonObject) -> None:
+        with lock:
+            stdout.write(encode(message).decode())
+            stdout.flush()
+
+    kernel = Kernel(load_config(root), write)
     for line in stdin:
         if line.strip():
-            stdout.write(encode(kernel.handle(line)).decode())
-            stdout.flush()
+            write(kernel.handle(line))
 
 
 def main() -> None:
