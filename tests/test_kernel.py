@@ -139,6 +139,21 @@ async def test_validate_valid_spec(config: Config) -> None:
     assert [i for i in result["issues"] if i["severity"] == "error"] == []
 
 
+async def test_validate_progress_and_stream_without_warnings(config: Config) -> None:
+    spec: JsonObject = {
+        "kind": "seq",
+        "children": [
+            op("words@1"),
+            {"kind": "progress", "params": {"total": 3}},
+            {"kind": "stream", "children": [op("shout@1")]},
+        ],
+    }
+    async with KernelClient(config) as kernel:
+        result = await request(kernel, "validate", {"spec": spec})
+
+    assert result["issues"] == []
+
+
 async def test_validate_type_mismatch_has_path_and_types(config: Config) -> None:
     async with KernelClient(config) as kernel:
         spec: JsonObject = {"version": 1, "root": seq("count_words@1", "shout@1")}

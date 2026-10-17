@@ -205,23 +205,29 @@ These notifications are mainly for the human in the client UI; the model
 usually does not read them. Client support varies and must be checked
 with Claude Code and the desktop app.
 
-### Asynchronous runs and dashboard
+### Dashboard and asynchronous runs
 
-`run(wait=false)` returns a `run_id`; `run_status(run_id)` returns a compact
-snapshot of all progress nodes; `cancel_run` stops a run. This also avoids
-client tool-call timeouts on long runs.
+MCP progress notifications were not shown by the Claude desktop app, neither
+in the Code tab nor in a chat (tested with a 20 s run). So the dashboard
+comes first and does not depend on the host:
 
-The dashboard is an MCP App (rendered by Claude Desktop and claude.ai; Claude
-Code stays text-only). A `ui://ico/run` resource is linked from `run` and
-`describe`. The page:
+- A small HTTP server in the server process, bound to `127.0.0.1`, with a
+  one-time token in the URL, serves one HTML + JS page (scripts bundled).
+- The server keeps the live state of active and recent runs from the
+  kernel's progress notifications, for synchronous runs too. The page polls
+  it: all progress nodes (label, done, total, rate, eta), state, errors and
+  the final summary. A `dashboard` tool returns the URL; `run` results
+  include it. The desktop app can show it in its built-in browser pane.
+- All data access goes through a small adapter, so the same page can later
+  be hosted as an MCP App (`ui://ico/run`, adapter via `callServerTool`).
 
-- renders the pipeline graph from the `describe` JSON view model produced
-  by ICO core; the page knows no node kinds, so a new node type needs no
-  JS change;
-- polls `run_status` through `callServerTool` and overlays progress on
-  graph nodes by `progress_key`; nested progress is shown in full here,
-  unlike MCP progress notifications;
-- shows the result summary and output paths when the run ends.
+Then asynchronous runs: `run(wait=false)` returns a `run_id`,
+`run_status(run_id)` returns the same snapshot the dashboard uses,
+`cancel_run` stops a run. This also avoids client tool-call timeouts on
+long runs.
+
+Later (deferred): the MCP App host and the pipeline graph from the ICO
+`describe` JSON backend with progress overlaid on graph nodes.
 
 ### Server instructions
 

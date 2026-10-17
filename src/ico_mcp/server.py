@@ -36,7 +36,11 @@ Build and run data pipelines from a registry of typed operators.
 2. Otherwise compose one from existing operators: search_operators step by
    step (by input_type / output_type / text / tags), then validate, then run.
    Specs are JSON: {"kind": "op", "op": "name@version", "params": {...}} for
-   an operator, {"kind": "seq", "children": [...]} for a chain.
+   an operator, {"kind": "seq", "children": [...]} for a chain. Example:
+   split words, report progress, upper-case each word:
+   {"kind": "seq", "children": [{"kind": "op", "op": "words@1"},
+    {"kind": "progress", "params": {"total": 40}},
+    {"kind": "stream", "children": [{"kind": "op", "op": "upper@1"}]}]}
 3. Write a new operator (propose_operator) only when a step is missing.
    Keep operators small, typed and parametric; configuration goes into
    constructor params, not into closures; heavy models load lazily. Give

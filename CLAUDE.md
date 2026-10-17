@@ -49,31 +49,47 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    (`progress` / `total` = its `done` / `total`, `message` e.g.
    "inpaint 120/900"). The SDK sends nothing without a progress token.
    The final state of every node goes into the run trace; the other nodes
-   are shown by the dashboard (item 9). Needs apriori3d/ico#24 (`run`
+   are shown by the dashboard (item 8). Needs apriori3d/ico#24 (`run`
    tools, initial snapshots on activation).
 6. [x] `propose_operator`: stages write → typecheck (pyright, file only,
    on by default) → load → register → examples, structured stage reports.
-7. [ ] `crystallize`: branch, move drafts to stable, tests from examples,
+7. [x] Spec and progress fixes found in a live run:
+   - add a short spec example to the server `instructions` (leaf
+     operators use `"op": "name@version"`; an agent guessed `ref` first);
+   - `progress` and `stream` nodes in a seq give "signature could not be
+     inferred" warnings that name internal methods (`_identity_fn`,
+     `_stream_fn`): infer the identity signature of `IcoProgress` from its
+     neighbours and use node labels in messages (fix in `../ico`, branch
+     `fix/transparent-identity-links`: untyped identity nodes are skipped
+     by link checks).
+8. [ ] Browser dashboard (first; MCP progress notifications were not shown
+   by the desktop app, neither in the Code tab nor in a chat). One HTML + JS
+   page served by a small HTTP server in the server process, bound to
+   `127.0.0.1` only, one-time token in the URL. The server keeps the live
+   state of active and recent runs from the kernel's progress
+   notifications (also for synchronous `run`), and the page polls it:
+   all progress nodes (label, done, total, rate, eta), state, errors,
+   final summary. A `dashboard` tool returns the URL, and `run` results
+   include it. Scripts bundled into the HTML (no CDN). All data access goes
+   through a small adapter (`getStatus`) so the page can later be hosted as
+   an MCP App. In the desktop app it can open in the built-in browser pane.
+   The pipeline graph (`describe` JSON backend) is not part of this item.
+9. [ ] Asynchronous runs: `run(wait=false)` returns a `run_id`;
+   `run_status(run_id)` returns the same compact snapshot the dashboard
+   uses; `cancel_run(run_id)`. Runs live in the kernel; the server tracks
+   them.
+10. [ ] `crystallize`: branch, move drafts to stable, tests from examples,
    gate (pyright strict, tests, validate pipelines), commit, push,
    `gh pr create` with cards, gate report and trace stats.
-8. [ ] Asynchronous runs: `run(wait=false)` returns a `run_id`;
-   `run_status(run_id)` returns a compact snapshot with all progress nodes
-   (key, label, done, total, rate, eta), state and error count;
-   `cancel_run(run_id)`. Runs live in the kernel; the server tracks them.
-9. [ ] Dashboard as an MCP App (needs the deferred ICO core JSON backend for
-   `describe`; implement it in `../ico` as part of this item): a `ui://ico/run` resource
-   (`text/html;profile=mcp-app`) linked from `run` and a `describe(spec)`
-   tool via `_meta.ui.resourceUri`. The page renders the `describe` JSON
-   view model (ICO core) generically, and polls `run_status` through
-   `callServerTool` to overlay live progress on the graph nodes by
-   `progress_key`. Scripts are bundled into the HTML (no CDN). Text
-   results stay for clients without MCP Apps (Claude Code). Check how much
-   the Python MCP SDK supports MCP Apps; otherwise set `_meta` and the MIME
-   type manually.
-10. [ ] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
+11. [ ] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
    the desktop app; README with the workflow; how to
     specialize a clone (rename `domain` / `domain_draft`, set `ico.toml`).
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
 real need found in actual use.
+- Dashboard as an MCP App: the same page as a `ui://ico/run` resource
+  linked from `run` via `_meta.ui.resourceUri`, adapter via
+  `callServerTool`. Revisit when MCP Apps render reliably in the desktop.
+- Pipeline graph in the dashboard: ICO core JSON backend for `describe`
+  (deferred in `../ico`), nodes overlaid with progress by `progress_key`.
