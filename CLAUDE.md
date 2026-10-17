@@ -103,13 +103,15 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    uses; `cancel_run(run_id)`. Each run lives in a kernel process of its
    own (ICO cannot interrupt a flow, so cancel kills it); the server
    tracks them.
-11. [ ] `crystallize`: branch, move drafts to stable, tests from examples,
+11. [x] `crystallize`: branch, move drafts to stable, tests from examples,
    gate (pyright strict, tests, validate pipelines, and no import of the
     draft package from the stable package); moved modules are never
     rewritten: the closure of their relative imports moves with them, and
     remaining drafts that import a moved module get that import rewritten
     to the absolute stable form, commit, push,
-   `gh pr create` with cards, gate report and trace stats.
+   `gh pr create` with cards, gate report and trace stats. Done in a
+    temporary git worktree; drafts stay until the merge, then `reload` (and
+    server start) retires identical ones and reports differing ones.
 12. [ ] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
    the desktop app; README with the workflow; how to
     specialize a clone (rename `domain` / `domain_draft`, set `ico.toml`).

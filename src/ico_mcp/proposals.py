@@ -14,7 +14,6 @@ package.
 
 from __future__ import annotations
 
-import ast
 import importlib.util
 import json
 from collections.abc import Sequence
@@ -23,6 +22,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from ico_mcp.config import Config
+from ico_mcp.drafts import draft_imports
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
 from ico_mcp.typecheck import TypecheckError, typecheck
@@ -191,7 +191,7 @@ def _write(config: Config, module: str, code: str) -> Path:
             f"{config.package}.{module} is a stable module; choose another name "
             "or register a new version of its operators",
         )
-    absolute = _draft_imports(code, config.draft_dir.name)
+    absolute = draft_imports(code, config.draft_dir.name)
     if absolute:
         raise ProposalError(
             "write",
@@ -204,61 +204,6 @@ def _write(config: Config, module: str, code: str) -> Path:
     # same-size rewrite within a second would otherwise load stale code.
     Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
     return path
-
-
-def _draft_imports(code: str, package: str) -> list[JsonObject]:
-    """Absolute imports of the draft ``package``, with the relative form.
-
-    Code that does not parse is left to the typecheck and load stages.
-    """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return []
-
-    def inner(name: str | None) -> str | None:
-        """``name`` inside ``package`` ("" for the package), else ``None``."""
-        if name == package:
-            return ""
-        if name is not None and name.startswith(f"{package}."):
-            return name.removeprefix(f"{package}.")
-        return None
-
-    found: list[JsonObject] = []
-    for node in ast.walk(tree):
-        fixes: list[str | None] = []
-        line = 0
-        if isinstance(node, ast.ImportFrom) and node.level == 0:
-            line = node.lineno
-            rest = inner(node.module)
-            if rest is not None:
-                relative = ast.ImportFrom(
-                    module=rest or None, names=node.names, level=1
-                )
-                fixes.append(ast.unparse(relative))
-        elif isinstance(node, ast.Import):
-            line = node.lineno
-            for alias in node.names:
-                rest = inner(alias.name)
-                if rest is None:
-                    continue
-                parent, _, leaf = rest.rpartition(".")
-                relative = ast.ImportFrom(
-                    module=parent or None,
-                    names=[ast.alias(leaf, alias.asname)],
-                    level=1,
-                )
-                fixes.append(ast.unparse(relative) if leaf else None)
-        for fix in fixes:
-            found.append(
-                {
-                    "line": line,
-                    "message": f"absolute import of the draft package {package!r}",
-                    "fix": fix,
-                }
-            )
-    found.sort(key=lambda d: cast(int, d["line"]))
-    return found
 
 
 async def _check_examples(

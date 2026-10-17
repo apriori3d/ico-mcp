@@ -205,19 +205,34 @@ the module is fixed.
 
 Prepares a human review as a GitHub pull request:
 
-1. Check: refs are drafts; the working tree is clean; `gh` is installed
-   and authenticated (otherwise an error with setup instructions).
-2. Create branch `crystallize/<slug>` from `github.base`.
-3. Move the modules of the refs (and the draft types they need) from
-   `<pkg>_draft` to `<pkg>`; save the given pipelines; write tests from the
-   examples.
-4. Gate on the whole stable package: pyright strict, the generated tests,
-   `validate` of every saved pipeline, and no import of the draft package.
+1. Check: `github` is set; refs are drafts; the pipelines are saved; `gh`
+   is installed and authenticated (otherwise an error with setup
+   instructions).
+2. Create branch `crystallize/<slug>` from `origin/<github.base>` in a
+   temporary git worktree. The working tree, from which the server runs,
+   is never switched or changed, so it need not be clean (saved examples
+   and pipelines are usually uncommitted there).
+3. Copy the modules of the refs (and the closure of their relative
+   imports) from `<pkg>_draft` to `<pkg>`, unchanged, with the examples of
+   their operators and the given pipelines. Examples are the tests: the
+   template has one test, `tests/test_domain_examples.py`, that runs the
+   examples of every stable operator.
+4. Gate on the whole stable package: it loads, pyright strict, no import of
+   the draft package, the examples pass, and `validate` of every saved
+   pipeline. A failing gate pushes nothing and removes the branch.
 5. Commit, push, `gh pr create`. The PR body contains: operator cards, the
    gate report, and trace statistics per operator (runs, successes, last
    run) from `runs/`.
 6. Return the PR URL. The human reviews the abstraction (operator
    boundaries, types, params), not every line, and merges; then `reload`.
+
+Drafts stay in the draft package until the merge, so the agent keeps using
+them while the PR is reviewed. After the human pulls the merge, `reload`
+(and server start) retires every draft whose stable module of the same name
+is identical: the draft is removed and the remaining drafts import the
+stable module. A draft that was changed after crystallization is kept and
+reported as a conflict (it does not load, its operators are registered by
+the stable module).
 
 ### Traces
 

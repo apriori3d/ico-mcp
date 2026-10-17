@@ -23,8 +23,10 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, JsonValue
 
-from ico_mcp import pipelines
+from ico_mcp import drafts, pipelines
 from ico_mcp.config import Config, ConfigError, load_config
+from ico_mcp.crystallize import CrystallizeError
+from ico_mcp.crystallize import crystallize as open_pull_request
 from ico_mcp.jobs import Jobs
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
@@ -63,7 +65,9 @@ Build and run data pipelines from a registry of typed operators.
    or the dashboard tool): it shows the progress of every node and the
    pipeline plan.
 6. When a pipeline works and is likely to be reused, save_pipeline, then
-   suggest crystallizing it to the human.
+   suggest crystallizing it to the human: crystallize opens a pull request
+   that makes its draft operators stable; after the merge, the human pulls
+   and you call reload.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -90,6 +94,7 @@ def create_server(config: Config) -> MCPServer[None]:
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[None]) -> AsyncGenerator[None]:
+        drafts.retire(config)  # before the kernel loads anything
         board.start()
         try:
             async with jobs:
@@ -315,14 +320,49 @@ def create_server(config: Config) -> MCPServer[None]:
         }
 
     @server.tool(annotations=WRITES)
+    async def crystallize(
+        refs: list[str],
+        title: str,
+        summary: str,
+        pipelines: list[str] | None = None,
+    ) -> dict[str, JsonValue]:
+        """Open a GitHub pull request that makes draft operators stable.
+
+        Moves the modules of `refs` (and the draft modules they import
+        relatively) into the stable package with their examples and the
+        given saved `pipelines`, in a branch of its own; the working tree is
+        not changed. A gate (load, pyright strict, no draft imports,
+        examples, validate pipelines) must pass before anything is pushed.
+        Returns the pull request URL and the gate report. Ask the human
+        first: this pushes a branch and opens a pull request.
+        """
+        async with proposing:
+            try:
+                return await open_pull_request(
+                    config,
+                    kernel,
+                    refs=refs,
+                    title=title,
+                    summary=summary,
+                    pipeline_names=pipelines or [],
+                )
+            except CrystallizeError as e:
+                raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
+
+    @server.tool(annotations=WRITES)
     async def reload() -> dict[str, JsonValue]:
         """Restart the kernel and reload all operators (after a merge or edits).
 
-        Returns the load report of the stable and the draft package.
+        Drafts crystallized by a merged pull request are retired first.
+        Returns the load report of the stable and the draft package, and
+        `drafts`: retired drafts, drafts whose imports were rewritten to the
+        stable package, and conflicts (a draft that differs from its stable
+        module).
         """
+        retired = drafts.retire(config)
         with tool_errors():
             report = await kernel.start()
-        return cast(JsonObject, report)
+        return {**cast(JsonObject, report), "drafts": retired}
 
     return server
 

@@ -35,6 +35,7 @@ TOOLS = {
     "dashboard",
     "run_status",
     "cancel_run",
+    "crystallize",
 }
 
 
