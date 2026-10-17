@@ -1,7 +1,9 @@
 """The MCP server (stdio): a fixed set of tools over the kernel.
 
 The server never imports operator code: operators live in the kernel
-process, and the server sees them only as JSON cards.
+process, and the server sees them only as JSON cards. It hosts the ICO Live
+Board (the dashboard) with the runs it starts, so the board's URL and
+history survive kernel restarts.
 """
 
 from __future__ import annotations
@@ -17,6 +19,9 @@ from pathlib import Path
 from typing import cast
 
 import anyio
+from ico import PlanView
+from ico.tools.board import BoardRun, BoardRuns, LiveBoard  # pyright: ignore[reportMissingTypeStubs]  # ico.tools is a namespace package
+from ico.tools.board.runs import ProgressSnapshot  # pyright: ignore[reportMissingTypeStubs]
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
@@ -38,10 +43,12 @@ Build and run data pipelines from a registry of typed operators.
    step (by input_type / output_type / text / tags), then validate, then run.
    Specs are JSON: {"kind": "op", "op": "name@version", "params": {...}} for
    an operator, {"kind": "seq", "children": [...]} for a chain. Example:
-   split words, report progress, upper-case each word:
+   split words, then upper-case each word, counting words as progress:
    {"kind": "seq", "children": [{"kind": "op", "op": "words@1"},
-    {"kind": "progress", "params": {"total": 40}},
-    {"kind": "stream", "children": [{"kind": "op", "op": "upper@1"}]}]}
+    {"kind": "stream", "children": [{"kind": "seq", "children": [
+     {"kind": "progress", "params": {"total": 40}},
+     {"kind": "op", "op": "upper@1"}]}]}]}
+   A progress node counts the items that pass it: put it inside the stream.
 3. Write a new operator (propose_operator) only when a step is missing.
    Keep operators small, typed and parametric; configuration goes into
    constructor params, not into closures; heavy models load lazily. Give
@@ -53,7 +60,9 @@ Build and run data pipelines from a registry of typed operators.
    it may stay in memory. Draft modules import each other relatively
    (from .frames import Frame) and stable modules absolutely
    (from <package>.frames import Frame).
-5. Pass data by reference (paths or URIs), never as bytes.
+5. Pass data by reference (paths or URIs), never as bytes. For a long run,
+   give the human the dashboard URL (in run results, or the dashboard tool):
+   it shows the progress of every node and the pipeline plan.
 6. When a pipeline works and is likely to be reused, save_pipeline, then
    suggest crystallizing it to the human.
 """
@@ -76,12 +85,16 @@ def create_server(config: Config) -> MCPServer[None]:
     """The ico-mcp server for a repository."""
     kernel = KernelClient(config)
     proposing = anyio.Lock()
+    runs = BoardRuns()
+    board = LiveBoard(runs)
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[None]) -> AsyncGenerator[None]:
+        board.start()
         try:
             yield
         finally:
+            board.stop()
             await kernel.aclose()
 
     server = MCPServer[None](config.name, instructions=INSTRUCTIONS, lifespan=lifespan)
@@ -195,18 +208,25 @@ def create_server(config: Config) -> MCPServer[None]:
 
         Large data goes by reference: pass paths, get paths back. With a
         progress token, the first progress node of the flow is reported.
+        `dashboard` is the URL of the page with the progress of every node.
         """
         params: JsonObject = {"spec": spec, "input": input}
         if max_items is not None:
             params["max_items"] = max_items
         reporter = ProgressReporter()
+        live = runs.start(", ".join(traces.op_refs(spec)) or "run")
 
         async def on_notification(message: JsonObject) -> None:
             body = message.get("params")
-            if message.get("method") != "progress" or not isinstance(body, dict):
+            if not isinstance(body, dict):
                 return
-            snapshot = body.get("snapshot")
-            status = reporter.update(snapshot) if isinstance(snapshot, dict) else None
+            plan, snapshot = body.get("plan"), body.get("snapshot")
+            if message.get("method") == "plan" and isinstance(plan, dict):
+                live.plan = cast(PlanView, plan)
+            if message.get("method") != "progress" or not isinstance(snapshot, dict):
+                return
+            live.progress(cast(ProgressSnapshot, snapshot))
+            status = reporter.update(snapshot)
             if status is not None:
                 # A no-op unless the client sent a progress token.
                 await ctx.report_progress(status.progress, status.total, status.message)
@@ -221,6 +241,10 @@ def create_server(config: Config) -> MCPServer[None]:
             )
         except KernelError as e:
             error = e.to_dict()
+        live.finish(
+            str(error.get("message")) if error is not None else None,
+            summary=_summary(result) if result is not None else None,
+        )
         traces.write(
             config.runs_dir,
             started=started,
@@ -229,11 +253,18 @@ def create_server(config: Config) -> MCPServer[None]:
             input=input,
             result=result,
             error=error,
-            progress=reporter.summary(),
+            progress=_final_progress(live),
         )
         if error is not None:
+            error = {**error, "dashboard": board.url}
             raise ToolError(json.dumps(error, ensure_ascii=False))
-        return cast(JsonObject, result)
+        return {**cast(JsonObject, result), "dashboard": board.url}
+
+    @server.tool(annotations=READ_ONLY)
+    async def dashboard() -> dict[str, JsonValue]:
+        """The URL of the dashboard: progress of every node and the pipeline
+        plan of active and recent runs. Give it to the human to open."""
+        return {"url": board.url}
 
     @server.tool(annotations=WRITES)
     async def save_pipeline(
@@ -305,6 +336,24 @@ def create_server(config: Config) -> MCPServer[None]:
         return cast(JsonObject, report)
 
     return server
+
+
+def _summary(result: JsonObject) -> str:
+    """One line for the dashboard: outputs, item errors, truncation."""
+    total, errors = result.get("total"), result.get("errors")
+    count = len(errors) if isinstance(errors, list) else 0
+    parts = [f"{total} output(s)", f"{count} item error(s)"]
+    if result.get("truncated"):
+        parts.append("truncated")
+    return " · ".join(parts)
+
+
+def _final_progress(run: BoardRun) -> list[JsonValue]:
+    """The final state of every progress node, for the run trace."""
+    out: list[JsonValue] = []
+    for node in run.view()["progress"]:
+        out.append({k: node[k] for k in ("key", "label", "done", "total")})
+    return out
 
 
 @contextmanager

@@ -245,8 +245,18 @@ async def test_validate_progress_and_stream_without_warnings(config: Config) -> 
         "kind": "seq",
         "children": [
             op("words@1"),
-            {"kind": "progress", "params": {"total": 3}},
-            {"kind": "stream", "children": [op("shout@1")]},
+            {
+                "kind": "stream",
+                "children": [
+                    {
+                        "kind": "seq",
+                        "children": [
+                            {"kind": "progress", "params": {"total": 3}},
+                            op("shout@1"),
+                        ],
+                    }
+                ],
+            },
         ],
     }
     async with KernelClient(config) as kernel:
@@ -311,8 +321,12 @@ async def test_run_streams_progress_notifications(
         )
 
     assert cast(dict[str, Any], result)["outputs"] == ["A", "B", "C"]
-    assert all(n["method"] == "progress" for n in notifications)
-    snapshots = [cast(dict[str, Any], n["params"])["snapshot"] for n in notifications]
+    plan, *progress = notifications
+    assert plan["method"] == "plan"
+    rows = cast(dict[str, Any], plan["params"])["plan"]["rows"]
+    assert "".join(s["text"] for s in rows[0][0]) == "words"
+    assert all(n["method"] == "progress" for n in progress)
+    snapshots = [cast(dict[str, Any], n["params"])["snapshot"] for n in progress]
     assert (snapshots[0]["label"], snapshots[0]["done"]) == ("words", 0)
     assert (snapshots[-1]["done"], snapshots[-1]["total"]) == (3, 3)
 
@@ -324,6 +338,21 @@ async def test_operator_stdout_does_not_break_the_protocol(config: Config) -> No
 
     assert result["outputs"] == ["HI"]
     assert again["outputs"] == ["YO"]
+
+
+async def test_no_plan_for_a_spec_that_does_not_build(config: Config) -> None:
+    notifications: list[JsonObject] = []
+
+    async def collect(message: JsonObject) -> None:
+        notifications.append(message)
+
+    async with KernelClient(config) as kernel:
+        with pytest.raises(KernelError):
+            await kernel.request(
+                "run", {"spec": op("nope@1"), "input": "a"}, on_notification=collect
+            )
+
+    assert notifications == []
 
 
 async def test_run_error_and_spec_error(config: Config) -> None:

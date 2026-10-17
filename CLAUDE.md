@@ -87,18 +87,17 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
       as the fix). State the rule in the server `instructions`.
     No shared standard type library yet: the vocabulary grows from real
     domains through crystallization.
-9. [ ] Browser dashboard (first; MCP progress notifications were not shown
-   by the desktop app, neither in the Code tab nor in a chat). One HTML + JS
-   page served by a small HTTP server in the server process, bound to
-   `127.0.0.1` only, one-time token in the URL. The server keeps the live
-   state of active and recent runs from the kernel's progress
-   notifications (also for synchronous `run`), and the page polls it:
-   all progress nodes (label, done, total, rate, eta), state, errors,
-   final summary. A `dashboard` tool returns the URL, and `run` results
-   include it. Scripts bundled into the HTML (no CDN). All data access goes
-   through a small adapter (`getStatus`) so the page can later be hosted as
-   an MCP App. In the desktop app it can open in the built-in browser pane.
-   The pipeline graph (`describe` JSON backend) is not part of this item.
+9. [x] Dashboard: host the ICO Live Board (item 16 of the `ico` roadmap;
+   needs it first) in the server process, not in the kernel, so the URL
+   and run history survive kernel restarts. Its data source is the
+   server's registry of active and recent runs, fed by the kernel's
+   progress notifications (also for synchronous `run`), plus the
+   `describe` JSON of each run's spec. A `dashboard` tool returns the URL;
+   `run` results include it. In the desktop app it can open in the
+   built-in browser pane. (MCP progress notifications were not shown by
+   the desktop app, neither in the Code tab nor in a chat.) Needs
+   apriori3d/ico#29 (run summary) and apriori3d/ico#30 (chain signatures
+   across untyped progress nodes).
 10. [ ] Asynchronous runs: `run(wait=false)` returns a `run_id`;
    `run_status(run_id)` returns the same compact snapshot the dashboard
    uses; `cancel_run(run_id)`. Runs live in the kernel; the server tracks
@@ -120,5 +119,3 @@ real need found in actual use.
 - Dashboard as an MCP App: the same page as a `ui://ico/run` resource
   linked from `run` via `_meta.ui.resourceUri`, adapter via
   `callServerTool`. Revisit when MCP Apps render reliably in the desktop.
-- Pipeline graph in the dashboard: ICO core JSON backend for `describe`
-  (deferred in `../ico`), nodes overlaid with progress by `progress_key`.

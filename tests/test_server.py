@@ -1,6 +1,8 @@
 import json
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -27,6 +29,7 @@ TOOLS = {
     "propose_types",
     "list_types",
     "get_type",
+    "dashboard",
 }
 
 
@@ -80,6 +83,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "get_pipeline",
         "list_types",
         "get_type",
+        "dashboard",
     }
 
 
@@ -244,13 +248,22 @@ async def test_reload_picks_up_new_drafts(config: Config) -> None:
     assert after["cards"][0]["status"] == "draft"
 
 
-def test_server_does_not_import_the_registry() -> None:
-    code = "import sys, ico_mcp.server; print('ico.registry' in sys.modules)"
+def test_server_does_not_import_operators(config: Config) -> None:
+    # The server imports ICO (for the Live Board) but never domain code:
+    # operators are only loaded by the kernel.
+    code = (
+        "import sys, ico_mcp.server\n"
+        "from ico.registry import default_registry\n"
+        "from ico_mcp.config import load_config\n"
+        f"ico_mcp.server.create_server(load_config({str(config.root)!r}))\n"
+        "print(any(m.split('.')[0] in ('domain', 'domain_draft') for m in sys.modules),"
+        " len(list(default_registry)))"
+    )
     out = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
 
-    assert out.stdout.strip() == "False"
+    assert out.stdout.split() == ["False", "0"]
 
 
 def test_default_root_is_this_repository() -> None:
@@ -267,3 +280,56 @@ def test_main_reports_a_config_error(tmp_path: Path) -> None:
 
     assert out.returncode == 1
     assert "ico.toml not found" in out.stderr
+
+
+# ─── Dashboard ───
+
+
+def board_get(url: str, path: str) -> Any:
+    base, _, query = url.partition("/?")
+    with urllib.request.urlopen(
+        f"{base}{path}{'&' if '?' in path else '?'}{query}"
+    ) as r:
+        return json.loads(r.read())
+
+
+async def test_runs_show_on_the_dashboard(
+    config: Config, progress_spec_of: Callable[[int], dict[str, Any]]
+) -> None:
+    async with Client(create_server(config)) as client:
+        url = (await call(client, "dashboard"))["url"]
+        ok = await call(client, "run", spec=progress_spec_of(2), input="a b")
+        failed = await call_error(client, "run", spec=op("fail@1"), input="x")
+        listed = board_get(url, "/api/runs")
+        done = listed["runs"][1]
+        plan = board_get(url, f"/api/plan?run={done['id']}")
+        page = urllib.request.urlopen(url).read().decode()
+        with pytest.raises(urllib.error.HTTPError) as forbidden:
+            urllib.request.urlopen(url.replace("token=", "token=x"))
+
+    assert url.startswith("http://127.0.0.1:")
+    assert ok["dashboard"] == failed["dashboard"] == url
+    bad = listed["runs"][0]
+    assert (bad["title"], bad["state"]) == ("fail@1", "failed")
+    assert "boom" in bad["error"]
+    assert (done["title"], done["state"]) == ("shout@1, words@1", "done")
+    assert done["summary"] == "2 output(s) · 0 item error(s)"
+    assert [(p["label"], p["done"], p["total"]) for p in done["progress"]] == [
+        ("words", 2.0, 2.0)
+    ]
+    flow = ["".join(s["text"] for s in row[0]) for row in plan["rows"]]
+    assert any("for each in" in line for line in flow)
+    assert "ICO Live Board" in page
+    assert forbidden.value.code == 403
+
+
+async def test_dashboard_url_survives_a_kernel_restart(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        before = (await call(client, "dashboard"))["url"]
+        await call(client, "run", spec=op("shout@1"), input="a")
+        await call(client, "reload")
+        after = (await call(client, "dashboard"))["url"]
+        runs = board_get(after, "/api/runs")["runs"]
+
+    assert before == after
+    assert [r["title"] for r in runs] == ["shout@1"]

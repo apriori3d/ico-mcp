@@ -3,8 +3,8 @@
 MCP allows one progress stream per request with a strictly increasing
 ``progress``. The status is the first progress node of the flow: the kernel
 reports every node with ``done = 0`` in flow order before any progress, so
-the first snapshot names it. Other nodes are only kept for the run trace
-(and, later, the dashboard).
+the first snapshot names it. All nodes are shown on the dashboard (the
+ICO Live Board), which also gives their final state to the run trace.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ class ProgressReporter:
     def __init__(self) -> None:
         self._first: str | None = None
         self._last: float | None = None
-        self._nodes: dict[str, JsonObject] = {}
 
     def update(self, snapshot: JsonObject) -> Status | None:
         """The status to send for a snapshot, or ``None`` to send nothing.
@@ -38,7 +37,6 @@ class ProgressReporter:
         increase (e.g. the first node restarts in a loop).
         """
         key = str(snapshot.get("key"))
-        self._nodes[key] = snapshot
         if self._first is None:
             self._first = key
         if key != self._first:
@@ -52,13 +50,6 @@ class ProgressReporter:
         if total > 0:
             return Status(done, total, f"{label} {done:g}/{total:g}")
         return Status(done, None, f"{label} {done:g}")
-
-    def summary(self) -> list[JsonValue]:
-        """The last state of every node, in the order they were reported."""
-        out: list[JsonValue] = []
-        for snapshot in self._nodes.values():
-            out.append({k: snapshot.get(k) for k in ("key", "label", "done", "total")})
-        return out
 
 
 def _number(value: JsonValue) -> float:

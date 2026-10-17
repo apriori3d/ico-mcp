@@ -256,26 +256,28 @@ with Claude Code and the desktop app.
 ### Dashboard and asynchronous runs
 
 MCP progress notifications were not shown by the Claude desktop app, neither
-in the Code tab nor in a chat (tested with a 20 s run). So the dashboard
-comes first and does not depend on the host:
+in the Code tab nor in a chat (tested with a 20 s run). So progress is shown
+on a browser dashboard that does not depend on the host.
 
-- A small HTTP server in the server process, bound to `127.0.0.1`, with a
-  one-time token in the URL, serves one HTML + JS page (scripts bundled).
-- The server keeps the live state of active and recent runs from the
-  kernel's progress notifications, for synchronous runs too. The page polls
-  it: all progress nodes (label, done, total, rate, eta), state, errors and
-  the final summary. A `dashboard` tool returns the URL; `run` results
-  include it. The desktop app can show it in its built-in browser pane.
-- All data access goes through a small adapter, so the same page can later
-  be hosted as an MCP App (`ui://ico/run`, adapter via `callServerTool`).
+The dashboard is the ICO Live Board from ICO core: a page with console-like
+progress bars on top and the pipeline graph from the `describe` JSON
+backend below, served by a small stdlib HTTP server bound to `127.0.0.1`
+with a one-time token. ico-mcp only hosts it:
+
+- in the server process, not in the kernel, so the URL and run history
+  survive kernel restarts;
+- with the server's registry of active and recent runs as the data source,
+  fed by the kernel's progress notifications (synchronous runs too), plus
+  the `describe` JSON of each run's spec;
+- a `dashboard` tool returns the URL; `run` results include it. The desktop
+  app can show it in its built-in browser pane.
 
 Then asynchronous runs: `run(wait=false)` returns a `run_id`,
 `run_status(run_id)` returns the same snapshot the dashboard uses,
 `cancel_run` stops a run. This also avoids client tool-call timeouts on
 long runs.
 
-Later (deferred): the MCP App host and the pipeline graph from the ICO
-`describe` JSON backend with progress overlaid on graph nodes.
+Later (deferred): the same page as an MCP App (`ui://ico/run`).
 
 ### Server instructions
 

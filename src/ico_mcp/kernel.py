@@ -6,12 +6,15 @@ and writes responses and notifications to the original stdout. File
 descriptor 1 is redirected to stderr first, so output of operators
 (``print``, child processes) never corrupts the protocol.
 
-Notification (no ``id``), sent while a ``run`` request is in progress::
+Notifications (no ``id``), sent while a ``run`` request is in progress::
 
+    {"method": "plan", "params": {"request": <id>, "plan": {...}}}
     {"method": "progress", "params": {"request": <id>, "snapshot": {...}}}
 
-``snapshot`` is a ``JsonProgressTool`` snapshot; every progress node is
-first reported with ``done = 0``, in flow order.
+``plan`` is the ``plan_view`` of the built spec (the console plan as rows),
+sent first, unless the spec does not build. ``snapshot`` is a
+``JsonProgressTool`` snapshot; every progress node is first reported with
+``done = 0``, in flow order.
 """
 
 from __future__ import annotations
@@ -26,7 +29,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any, cast
 
-from ico import IcoOperator, JsonProgressTool, SignatureIssue, validate_signatures
+from ico import (
+    IcoOperator,
+    JsonProgressTool,
+    SignatureIssue,
+    plan_view,
+    validate_signatures,
+)
 from ico.core.signature_utils import format_ico_type  # pyright: ignore[reportMissingTypeStubs]  # ico.core is a namespace package
 from ico.registry import RegistryEntry, default_registry, load_operators
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run
@@ -192,6 +201,7 @@ class Kernel:
     def run(self, params: JsonObject) -> JsonValue:
         spec = _spec(params)
         max_items = _positive_int(params, "max_items", DEFAULT_MAX_ITEMS)
+        self._send_plan(spec)
         progress = JsonProgressTool(self._progress(self.request_id))
         try:
             result = run(
@@ -204,6 +214,16 @@ class Kernel:
                 "run_error", f"{type(e).__name__}: {e}", _traceback(e)
             ) from None
         return result.to_dict()
+
+    def _send_plan(self, spec: PipelineSpec | NodeSpec) -> None:
+        """Notify the plan of a spec; a spec that does not build fails in
+        ``run`` with a located error instead."""
+        try:
+            plan = cast(JsonObject, plan_view(build(spec)))
+        except Exception:
+            return
+        params: JsonObject = {"request": self.request_id, "plan": plan}
+        self.notify({"method": "plan", "params": params})
 
     def _progress(self, request_id: JsonValue) -> Callable[[ProgressSnapshot], None]:
         def send(snapshot: ProgressSnapshot) -> None:

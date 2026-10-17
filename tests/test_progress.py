@@ -48,16 +48,3 @@ def test_unknown_total() -> None:
     reporter = ProgressReporter()
 
     assert reporter.update(snapshot("0", "items", 5, 0)) == Status(5, None, "items 5")
-
-
-def test_summary_keeps_the_last_state_of_every_node() -> None:
-    reporter = ProgressReporter()
-    reporter.update(snapshot("0", "epoch", 0, 2))
-    reporter.update(snapshot("1", "batch", 0, 4))
-    reporter.update(snapshot("1", "batch", 4, 4))
-    reporter.update(snapshot("0", "epoch", 2, 2))
-
-    assert reporter.summary() == [
-        {"key": "0", "label": "epoch", "done": 2, "total": 2},
-        {"key": "1", "label": "batch", "done": 4, "total": 4},
-    ]
