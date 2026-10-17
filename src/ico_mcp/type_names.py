@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, get_args, get_origin
 
-from ico.core.signature_utils import format_ico_type  # pyright: ignore[reportMissingTypeStubs]  # ico.core is a namespace package
+from ico.core.signature_utils import format_ico_type
 
 from ico_mcp.protocol import JsonValue, KernelError
 

@@ -184,9 +184,13 @@ async def test_save_list_get_pipeline(config: Config) -> None:
         "name": "count",
         "path": "pipelines/count.spec.json",
         "replaced": False,
+        "params": [],
     }
-    assert listed == {"pipelines": [{"name": "count", "description": "Count words."}]}
+    assert listed == {
+        "pipelines": [{"name": "count", "description": "Count words.", "params": []}]
+    }
     assert loaded["spec"] == {"version": 1, "root": spec}
+    assert (loaded["params"], loaded["check_params"]) == ([], None)
     assert result["outputs"] == [2]
 
 

@@ -15,7 +15,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any, cast, get_type_hints
 
-from ico.core.signature_utils import format_ico_type  # pyright: ignore[reportMissingTypeStubs]  # ico.core is a namespace package
+from ico.core.signature_utils import format_ico_type
 
 from ico_mcp.protocol import JsonObject, JsonValue
 from ico_mcp.type_names import label

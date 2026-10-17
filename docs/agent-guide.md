@@ -13,7 +13,7 @@ Read sections 0–2 before your first spec. Read section 4 before your first
 ## 0. Quick start
 
 ```
-list_pipelines ──found──→ get_pipeline → run
+list_pipelines ──found──→ run(pipeline=name, input, params)
       │ none
       ▼
 search_operators (input_type / output_type / text / tags)
@@ -27,7 +27,9 @@ save_pipeline → ask the human → crystallize → (merge) → reload
 
 Minimal session:
 
-1. `list_pipelines`. Empty, or nothing fits → compose.
+1. `list_pipelines` (with each pipeline's parameters). One fits → run it
+   by name: `run(pipeline="split_scenes", input=..., params={...})`.
+   Empty, or nothing fits → compose.
 2. `search_operators()` with no arguments lists the whole registry (cards
    carry `total`); then search by type: `input_type="str"`,
    `output_type="VideoRef"`.
@@ -39,7 +41,9 @@ Minimal session:
 **A pipeline is one function from a JSON input to JSON outputs.**
 
 - `run(spec, input)` passes `input` to the first node **as is**: a JSON
-  string stays `str`, an object stays `dict`. It is **never decoded into a
+  string stays `str`, an object stays `dict`. Pass a path as a plain
+  string (`/data/a.mp4`), not quoted (`"\"/data/a.mp4\""` arrives with
+  the quotes). It is **never decoded into a
   domain type**. A flow that works on a `VideoRef` starts with an operator
   `str → VideoRef` (or `dict → VideoRef`).
 - The last node must return JSON-compatible values (str, int, float,
@@ -111,7 +115,7 @@ Never `ref`, never a function name: only `op` with `name@version`.
 | `batcher` | – | `batch_size` (int), `drop_last` (bool) | group stream items into batches |
 | `process` | 1 (body) | `num_iterations` (int) | apply the body that many times |
 | `process` | 2 (body, until) | `max_iterations` (int), `on_limit` (`return` / `raise`) | apply the body until the predicate is true on its output |
-| `progress` | – | `total` (number) | count the items passing by (dashboard, MCP progress) |
+| `progress` | – | `total` (number; omit when unknown) | count the items passing by (dashboard, MCP progress) |
 | `identity` | – | – | pass items through |
 
 Any other `kind` fails with `Cannot build node of kind '…' yet`: there is
@@ -122,6 +126,32 @@ and every pool slot gets a fresh copy; with `"factory": false` it has
 exactly `pool_size` children. `retry` is `{"max_retries": int, "delay":
 number, "backoff": number, "retry_on": ["builtins:TimeoutError"]}`
 (builtin exception types only).
+
+### Parameters
+
+A param value may be a **pipeline parameter** instead of a fixed value,
+given per run:
+
+```json
+{"kind": "op", "op": "cut_clip@1",
+ "params": {"out_dir": {"$param": "out_dir"},
+            "threshold": {"$param": "threshold", "default": 27.0}}}
+```
+
+- `run(..., params={"out_dir": "/tmp/v02"})`; parameters without a
+  `default` are required, `default` may be `null`. Unknown or missing
+  names are errors that list them all.
+- `input` is the data of a run; parameters are its configuration.
+  Parametrize what changes between runs of a saved pipeline: output
+  locations, thresholds you try, binaries (`ffmpeg`), run sizes
+  (`pool_size`, `batch_size`, `progress.total`). Not per-item data (that
+  is `input` or an operator's output) and not secrets (they come from the
+  environment allowlist).
+- A name used by several nodes must be declared the same way (same
+  default). Only whole values: no substitution inside strings.
+- `validate(spec, params)` lists the parameters (`params` in the result,
+  with types from the operator classes) and needs values for those
+  without a default.
 
 ### Patterns
 
@@ -147,6 +177,12 @@ errors collected instead of stopping the run:
    "params": {"type": "ico.runtime.worker.mp.mp_worker:MPWorker"},
    "children": [{"kind": "op", "op": "remove_subtitles@1"}]}]}
 ```
+
+To count the items of an iterator that an earlier node produced (e.g. the
+output of an `async_stream`), wrap the progress node in a `stream`:
+`{"kind": "stream", "children": [{"kind": "progress", "params": {"total": 7}}]}`.
+A bare progress node after an iterator counts it as one item; `validate`
+warns about it (`counts_iterator`).
 
 Two analyses of one input: `fork` returns a tuple, i.e. a JSON list.
 
@@ -188,8 +224,8 @@ Imports:
 
 ```python
 from collections.abc import Iterator
-from ico.core.operator import IcoOperator  # base of class operators
-from ico.registry import register           # the decorator
+from ico import IcoOperator  # base of class operators
+from ico.registry import register  # the decorator
 ```
 
 `register(name, version, *, tags=(), caps=(), description=None)`:
@@ -300,8 +336,10 @@ class VideoRef:
 
 ## 6. Runs and the dashboard
 
-- `run(spec, input)` returns `outputs`, `total`, `truncated`, per-item
-  `errors`, the `run_id` and the `dashboard` URL.
+- `run(spec, input)` (or `run(pipeline=name, input, params)` for a saved
+  pipeline) returns `outputs`, `total`, `truncated`, per-item `errors`,
+  the `run_id` and the `dashboard` URL. The dashboard titles a run by its
+  pipeline (or root node) name and its parameter values.
 - First run on the smallest input (one file, a few seconds of video).
 - Long run: `run(..., wait=false)` returns the `run_id` at once; poll
   `run_status(run_id)` (state `running` / `done` / `failed`, progress of
@@ -313,7 +351,10 @@ class VideoRef:
 ## 7. Saving and crystallizing
 
 - `save_pipeline(name, spec, description)` when the pipeline will be
-  reused; it must validate. `replace=true` to overwrite.
+  reused; it must validate. `replace=true` to overwrite. Give `params`
+  for its parameters without a default: they only validate it (saved as
+  `check_params`, also used by the crystallize gate), never as run
+  values.
 - `crystallize(refs, title, summary, pipelines)` opens a pull request that
   makes the drafts stable. It pushes a branch: **ask the human first**.
   After they merge and pull, call `reload`.

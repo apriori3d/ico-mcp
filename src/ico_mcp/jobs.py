@@ -11,6 +11,7 @@ same on the board and in ``run_status``.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -20,8 +21,8 @@ from typing import Self, cast
 import anyio
 from anyio.abc import TaskGroup
 from ico import PlanView
-from ico.tools.board import BoardRun, BoardRuns  # pyright: ignore[reportMissingTypeStubs]  # ico.tools is a namespace package
-from ico.tools.board.runs import ProgressSnapshot  # pyright: ignore[reportMissingTypeStubs]
+from ico.tools.board import BoardRun, BoardRuns
+from ico.tools.board.runs import ProgressSnapshot
 
 from ico_mcp import traces
 from ico_mcp.config import Config
@@ -32,6 +33,7 @@ OnProgress = Callable[[JsonObject], Awaitable[None]]
 """Receives every progress snapshot of a run (e.g. for MCP progress)."""
 
 CANCELLED: JsonObject = {"code": "cancelled", "message": "the run was cancelled"}
+TITLE_MAX = 120
 
 
 class Job:
@@ -95,20 +97,29 @@ class Jobs:
         input: JsonValue,
         max_items: int | None = None,
         on_progress: OnProgress | None = None,
+        *,
+        pipeline: str | None = None,
+        values: JsonObject | None = None,
     ) -> Job:
-        """Start a run in a new kernel; it finishes in the background."""
+        """Start a run in a new kernel; it finishes in the background.
+
+        ``pipeline`` names a saved pipeline run by name; ``values`` are the
+        values of the pipeline parameters.
+        """
         if self._tasks is None:
             raise RuntimeError("Jobs is not entered")
         job = Job(
             KernelClient(self.config),
-            self.runs.start(", ".join(traces.op_refs(spec)) or "run"),
+            self.runs.start(_title(spec, pipeline, values)),
         )
         self._forget_evicted()
         self._jobs[job.id] = job
         params: JsonObject = {"spec": spec, "input": input}
         if max_items is not None:
             params["max_items"] = max_items
-        self._tasks.start_soon(self._run, job, params, on_progress)
+        if values is not None:
+            params["params"] = values
+        self._tasks.start_soon(self._run, job, params, on_progress, pipeline)
         return job
 
     def get(self, run_id: str) -> Job:
@@ -135,7 +146,11 @@ class Jobs:
         return job
 
     async def _run(
-        self, job: Job, params: JsonObject, on_progress: OnProgress | None
+        self,
+        job: Job,
+        params: JsonObject,
+        on_progress: OnProgress | None,
+        pipeline: str | None,
     ) -> None:
         started, clock = datetime.now(UTC), time.monotonic()
 
@@ -178,6 +193,8 @@ class Jobs:
             result=job.result,
             error=job.error,
             progress=_final_progress(job.board),
+            pipeline=pipeline,
+            params=cast(JsonObject | None, params.get("params")),
         )
         job.finished.set()
 
@@ -191,6 +208,22 @@ class Jobs:
         ]
         for run_id in gone:
             del self._jobs[run_id]
+
+
+def _title(spec: JsonObject, pipeline: str | None, values: JsonObject | None) -> str:
+    """The pipeline name, else the root node name, else the operator refs;
+    then the parameter values."""
+    root = spec.get("root", spec)
+    name = root.get("name") if isinstance(root, dict) else None
+    title = pipeline or (name if isinstance(name, str) else None)
+    title = title or ", ".join(traces.op_refs(spec)) or "run"
+    if values:
+        shown = (
+            f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}"
+            for k, v in values.items()
+        )
+        title = f"{title} · {', '.join(shown)}"
+    return title if len(title) <= TITLE_MAX else title[: TITLE_MAX - 1] + "…"
 
 
 def _summary(result: JsonObject) -> str:

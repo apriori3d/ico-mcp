@@ -117,6 +117,14 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     specialize a clone (rename `domain` / `domain_draft`, set `ico.toml`).
     Plus `docs/agent-guide.md` (spec reference, errors, writing operators,
     runs, domain notes), served by the `guide` tool.
+13. [x] Pipeline parameters (items 4, 5 and the titles of item 6 of
+    `docs/proposals/2026-10-17-first-domain-session.md`; needs
+    apriori3d/ico#36): `{"$param": ...}` references in specs; `run`
+    by `spec` or saved `pipeline` name with `params`; `validate` and
+    `save_pipeline` take `params` and report the declared parameters;
+    saved pipelines keep `check_params` for validation (also in the
+    crystallize gate); an explicit JSON schema for `input`; run titles
+    and traces carry the pipeline name and parameter values.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

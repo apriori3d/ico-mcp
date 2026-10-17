@@ -47,6 +47,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from ico import IcoOperator
 from ico.registry import register
 
 
@@ -95,6 +96,19 @@ def crash(text: str) -> str:
 def words(text: str) -> Iterator[str]:
     """Iterate over the words of a text."""
     return iter(text.split())
+
+
+@register("repeat", 1)
+class Repeat(IcoOperator[str, str]):
+    """Repeat a text."""
+
+    def __init__(self, times: int, sep: str = " ") -> None:
+        self.times = times
+        self.sep = sep
+        super().__init__(fn=self._apply)
+
+    def _apply(self, text: str) -> str:
+        return self.sep.join([text] * self.times)
 
 
 @register("getenv", 1)

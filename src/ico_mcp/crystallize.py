@@ -287,10 +287,12 @@ async def _gate_load_and_pipelines(config: Config) -> JsonObject:
         problems.extend(cast(list[JsonObject], stable["errors"]))
         for name in pipelines.names(config.pipelines_dir):
             doc = pipelines.load(config.pipelines_dir, name)
+            request: JsonObject = {"spec": doc}
+            values = pipelines.check_params(doc)
+            if values is not None:
+                request["params"] = values
             try:
-                checked = cast(
-                    JsonObject, await kernel.request("validate", {"spec": doc})
-                )
+                checked = cast(JsonObject, await kernel.request("validate", request))
             except KernelError as e:
                 problems.append({"pipeline": name, **e.to_dict()})
                 continue
