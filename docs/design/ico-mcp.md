@@ -277,6 +277,13 @@ Then asynchronous runs: `run(wait=false)` returns a `run_id`,
 `cancel_run` stops a run. This also avoids client tool-call timeouts on
 long runs.
 
+Each run (also with `wait=true`) has a kernel process of its own. ICO
+cannot interrupt a running flow, so `cancel_run` kills the run's kernel and
+its worker processes; the main kernel stays free for search, validate and
+proposals during a run, and a reload does not cut runs short (they finish
+on the code they loaded). The cost is importing the domain packages once
+per run. Examples of `propose_operator` still run in the main kernel.
+
 Later (deferred): the same page as an MCP App (`ui://ico/run`).
 
 ### Server instructions

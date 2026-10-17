@@ -1,12 +1,15 @@
 import json
+import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+import anyio
 import pytest
 from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
@@ -30,6 +33,8 @@ TOOLS = {
     "list_types",
     "get_type",
     "dashboard",
+    "run_status",
+    "cancel_run",
 }
 
 
@@ -84,6 +89,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "list_types",
         "get_type",
         "dashboard",
+        "run_status",
     }
 
 
@@ -333,3 +339,105 @@ async def test_dashboard_url_survives_a_kernel_restart(config: Config) -> None:
 
     assert before == after
     assert [r["title"] for r in runs] == ["shout@1"]
+
+
+# ─── Asynchronous runs ───
+
+
+async def wait_for(check: Callable[[], bool], timeout: float = 10.0) -> None:
+    with anyio.fail_after(timeout):
+        while not check():
+            await anyio.sleep(0.05)
+
+
+async def wait_dead(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await anyio.sleep(0.05)
+    return False
+
+
+async def poll_until_finished(client: Client, run_id: str) -> dict[str, Any]:
+    with anyio.fail_after(20):
+        while True:
+            status = await call(client, "run_status", run_id=run_id)
+            if status["state"] != "running":
+                return status
+            await anyio.sleep(0.1)
+
+
+async def test_run_without_waiting(
+    config: Config, progress_spec_of: Callable[[int], dict[str, Any]]
+) -> None:
+    async with Client(create_server(config)) as client:
+        started = await call(
+            client, "run", spec=progress_spec_of(3), input="a b c", wait=False
+        )
+        running = await call(client, "run_status", run_id=started["run_id"])
+        finished = await poll_until_finished(client, started["run_id"])
+        waited = await call(client, "run", spec=op("shout@1"), input="x")
+
+    assert started["state"] == "running"
+    assert started["dashboard"].startswith("http://127.0.0.1:")
+    assert running["id"] == started["run_id"]
+    assert finished["state"] == "done"
+    assert finished["result"]["outputs"] == ["A", "B", "C"]
+    assert finished["summary"] == "3 output(s) · 0 item error(s)"
+    assert [(p["label"], p["done"]) for p in finished["progress"]] == [("words", 3)]
+    assert waited["outputs"] == ["X"] and waited["run_id"] != started["run_id"]
+    assert len(traces(config)) == 2
+
+
+async def test_main_kernel_is_free_while_a_run_hangs(
+    config: Config, tmp_path: Path
+) -> None:
+    pid_file = tmp_path / "worker.pid"
+    async with Client(create_server(config)) as client:
+        started = await call(
+            client, "run", spec=op("hang@1"), input=str(pid_file), wait=False
+        )
+        await wait_for(pid_file.exists)
+        found = await call(client, "search_operators", text="shout")
+        await call(client, "reload")
+        still = await call(client, "run_status", run_id=started["run_id"])
+        cancelled = await call(client, "cancel_run", run_id=started["run_id"])
+        again = await call(client, "cancel_run", run_id=started["run_id"])
+
+    assert [c["name"] for c in found["cards"]] == ["shout"]
+    assert still["state"] == "running"
+    assert (cancelled["state"], cancelled["error"]) == (
+        "failed",
+        "the run was cancelled",
+    )
+    assert cancelled["kernel_error"]["code"] == "cancelled"
+    assert again == cancelled
+    assert await wait_dead(int(pid_file.read_text()))
+    [trace] = traces(config)
+    assert trace["error"]["code"] == "cancelled"
+
+
+async def test_failed_run_status_and_unknown_run(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        failed = await call_error(client, "run", spec=op("fail@1"), input="x")
+        status = await call(client, "run_status", run_id=failed["run_id"])
+        missing = await call_error(client, "run_status", run_id="nope")
+        not_cancelled = await call_error(client, "cancel_run", run_id="nope")
+
+    assert failed["code"] == "run_error"
+    assert status["state"] == "failed"
+    assert status["kernel_error"]["code"] == "run_error"
+    assert "result" not in status
+    assert missing["code"] == not_cancelled["code"] == "not_found"
+
+
+async def test_shutdown_kills_active_runs(config: Config, tmp_path: Path) -> None:
+    pid_file = tmp_path / "worker.pid"
+    async with Client(create_server(config)) as client:
+        await call(client, "run", spec=op("hang@1"), input=str(pid_file), wait=False)
+        await wait_for(pid_file.exists)
+
+    assert await wait_dead(int(pid_file.read_text()))

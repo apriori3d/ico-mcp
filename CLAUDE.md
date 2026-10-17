@@ -98,10 +98,11 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    the desktop app, neither in the Code tab nor in a chat.) Needs
    apriori3d/ico#29 (run summary) and apriori3d/ico#30 (chain signatures
    across untyped progress nodes).
-10. [ ] Asynchronous runs: `run(wait=false)` returns a `run_id`;
+10. [x] Asynchronous runs: `run(wait=false)` returns a `run_id`;
    `run_status(run_id)` returns the same compact snapshot the dashboard
-   uses; `cancel_run(run_id)`. Runs live in the kernel; the server tracks
-   them.
+   uses; `cancel_run(run_id)`. Each run lives in a kernel process of its
+   own (ICO cannot interrupt a flow, so cancel kills it); the server
+   tracks them.
 11. [ ] `crystallize`: branch, move drafts to stable, tests from examples,
    gate (pyright strict, tests, validate pipelines, and no import of the
     draft package from the stable package); moved modules are never

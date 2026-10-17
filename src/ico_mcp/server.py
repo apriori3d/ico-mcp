@@ -11,24 +11,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 import anyio
-from ico import PlanView
-from ico.tools.board import BoardRun, BoardRuns, LiveBoard  # pyright: ignore[reportMissingTypeStubs]  # ico.tools is a namespace package
-from ico.tools.board.runs import ProgressSnapshot  # pyright: ignore[reportMissingTypeStubs]
+from ico.tools.board import BoardRuns, LiveBoard  # pyright: ignore[reportMissingTypeStubs]  # ico.tools is a namespace package
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, JsonValue
 
-from ico_mcp import pipelines, traces
+from ico_mcp import pipelines
 from ico_mcp.config import Config, ConfigError, load_config
+from ico_mcp.jobs import Jobs
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
 from ico_mcp.proposals import Example, ProposalError, propose
@@ -60,9 +57,11 @@ Build and run data pipelines from a registry of typed operators.
    it may stay in memory. Draft modules import each other relatively
    (from .frames import Frame) and stable modules absolutely
    (from <package>.frames import Frame).
-5. Pass data by reference (paths or URIs), never as bytes. For a long run,
-   give the human the dashboard URL (in run results, or the dashboard tool):
-   it shows the progress of every node and the pipeline plan.
+5. Pass data by reference (paths or URIs), never as bytes. Start a long run
+   with run(wait=false), poll run_status(run_id) and stop it with
+   cancel_run if needed; give the human the dashboard URL (in run results,
+   or the dashboard tool): it shows the progress of every node and the
+   pipeline plan.
 6. When a pipeline works and is likely to be reused, save_pipeline, then
    suggest crystallizing it to the human.
 """
@@ -87,12 +86,14 @@ def create_server(config: Config) -> MCPServer[None]:
     proposing = anyio.Lock()
     runs = BoardRuns()
     board = LiveBoard(runs)
+    jobs = Jobs(config, runs)
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[None]) -> AsyncGenerator[None]:
         board.start()
         try:
-            yield
+            async with jobs:
+                yield
         finally:
             board.stop()
             await kernel.aclose()
@@ -203,62 +204,50 @@ def create_server(config: Config) -> MCPServer[None]:
         spec: dict[str, JsonValue],
         input: JsonValue = None,
         max_items: int | None = None,
+        wait: bool = True,
     ) -> dict[str, JsonValue]:
         """Run a spec once on a JSON input; returns outputs and per-item errors.
 
-        Large data goes by reference: pass paths, get paths back. With a
-        progress token, the first progress node of the flow is reported.
-        `dashboard` is the URL of the page with the progress of every node.
+        Large data goes by reference: pass paths, get paths back. Each run
+        has a kernel process of its own. With `wait=false` the call returns
+        the `run_id` at once: poll `run_status`, stop with `cancel_run`.
+        With a progress token, the first progress node of the flow is
+        reported. `dashboard` is the URL of the page with the progress of
+        every node.
         """
-        params: JsonObject = {"spec": spec, "input": input}
-        if max_items is not None:
-            params["max_items"] = max_items
         reporter = ProgressReporter()
-        live = runs.start(", ".join(traces.op_refs(spec)) or "run")
 
-        async def on_notification(message: JsonObject) -> None:
-            body = message.get("params")
-            if not isinstance(body, dict):
-                return
-            plan, snapshot = body.get("plan"), body.get("snapshot")
-            if message.get("method") == "plan" and isinstance(plan, dict):
-                live.plan = cast(PlanView, plan)
-            if message.get("method") != "progress" or not isinstance(snapshot, dict):
-                return
-            live.progress(cast(ProgressSnapshot, snapshot))
+        async def on_progress(snapshot: JsonObject) -> None:
             status = reporter.update(snapshot)
             if status is not None:
                 # A no-op unless the client sent a progress token.
                 await ctx.report_progress(status.progress, status.total, status.message)
 
-        started, clock = datetime.now(UTC), time.monotonic()
-        result: JsonObject | None = None
-        error: JsonObject | None = None
-        try:
-            result = cast(
-                JsonObject,
-                await kernel.request("run", params, on_notification=on_notification),
-            )
-        except KernelError as e:
-            error = e.to_dict()
-        live.finish(
-            str(error.get("message")) if error is not None else None,
-            summary=_summary(result) if result is not None else None,
-        )
-        traces.write(
-            config.runs_dir,
-            started=started,
-            duration=time.monotonic() - clock,
-            spec=spec,
-            input=input,
-            result=result,
-            error=error,
-            progress=_final_progress(live),
-        )
-        if error is not None:
-            error = {**error, "dashboard": board.url}
+        job = jobs.start(spec, input, max_items, on_progress if wait else None)
+        if not wait:
+            return {"run_id": job.id, "state": "running", "dashboard": board.url}
+        await job.finished.wait()
+        if job.error is not None:
+            error = {**job.error, "run_id": job.id, "dashboard": board.url}
             raise ToolError(json.dumps(error, ensure_ascii=False))
-        return {**cast(JsonObject, result), "dashboard": board.url}
+        assert job.result is not None
+        return {**job.result, "run_id": job.id, "dashboard": board.url}
+
+    @server.tool(annotations=READ_ONLY)
+    async def run_status(run_id: str) -> dict[str, JsonValue]:
+        """The state and progress of a run, as on the dashboard; a finished
+        run also has its `result` or its `kernel_error`."""
+        with tool_errors():
+            return jobs.get(run_id).status()
+
+    @server.tool(annotations=WRITES)
+    async def cancel_run(run_id: str) -> dict[str, JsonValue]:
+        """Stop a run by killing its kernel process (and its workers); a
+        finished run is left as is. Returns the run status."""
+        with tool_errors():
+            job = jobs.cancel(run_id)
+        await job.finished.wait()
+        return job.status()
 
     @server.tool(annotations=READ_ONLY)
     async def dashboard() -> dict[str, JsonValue]:
@@ -336,24 +325,6 @@ def create_server(config: Config) -> MCPServer[None]:
         return cast(JsonObject, report)
 
     return server
-
-
-def _summary(result: JsonObject) -> str:
-    """One line for the dashboard: outputs, item errors, truncation."""
-    total, errors = result.get("total"), result.get("errors")
-    count = len(errors) if isinstance(errors, list) else 0
-    parts = [f"{total} output(s)", f"{count} item error(s)"]
-    if result.get("truncated"):
-        parts.append("truncated")
-    return " · ".join(parts)
-
-
-def _final_progress(run: BoardRun) -> list[JsonValue]:
-    """The final state of every progress node, for the run trace."""
-    out: list[JsonValue] = []
-    for node in run.view()["progress"]:
-        out.append({k: node[k] for k in ("key", "label", "done", "total")})
-    return out
 
 
 @contextmanager

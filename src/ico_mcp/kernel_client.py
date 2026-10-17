@@ -107,6 +107,13 @@ class KernelClient:
         async with self._lock:
             await self._stop()
 
+    def kill(self) -> None:
+        """Kill the kernel and its worker processes now, without waiting for
+        the lock: a request in progress fails with ``crashed``."""
+        if self._process is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(self._process.pid, signal.SIGKILL)
+
     # ─── Internals (called under the lock) ───
 
     async def _spawn(self) -> JsonValue:
