@@ -305,3 +305,42 @@ async def test_reload_retires_merged_drafts(config: Config) -> None:
     assert report["drafts"]["rewritten"] == ["video"]
     assert report["draft"]["errors"] == []
     assert frame["status"] == "stable"
+
+
+PAD = '''from ico import IcoOperator
+from ico.registry import register
+
+
+@register("pad", 1)
+class Pad(IcoOperator[str, str]):
+    """Pad a text on the left."""
+
+    def __init__(self, width: int) -> None:
+        self.width = width
+        super().__init__(fn=self._apply)
+
+    def _apply(self, text: str) -> str:
+        return text.rjust(self.width)
+'''
+
+
+async def test_gate_validates_pipelines_with_their_check_params(repo: Config) -> None:
+    spec = {"kind": "op", "op": "pad@1", "params": {"width": {"$param": "width"}}}
+    async with Client(create_server(repo)) as client:
+        await call(client, "propose_operator", module="pad", code=PAD)
+        await call(
+            client, "save_pipeline", name="padded", spec=spec, description="",
+            params={"width": 8},
+        )  # fmt: skip
+        opened = await call(
+            client, "crystallize", refs=["pad@1"], title="Pad", summary="s",
+            pipelines=["padded"],
+        )  # fmt: skip
+
+    steps = {step["step"]: step for step in opened["gate"]}
+    assert steps["load and validate pipelines"]["ok"]
+    saved = json.loads(
+        branch_file(repo, opened["branch"], "pipelines/padded.spec.json")
+    )
+    assert saved["check_params"] == {"width": 8}
+    assert saved["root"]["params"] == {"width": {"$param": "width"}}

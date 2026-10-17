@@ -2,7 +2,13 @@
 
 A saved pipeline is a spec document with a description::
 
-    {"version": 1, "description": "...", "root": {...}}
+    {"version": 1, "description": "...", "root": {...},
+     "check_params": {"out_dir": "/tmp/check"}}
+
+``check_params`` (optional) holds values for the pipeline parameters
+without a default (``{"$param": ...}`` references), used only to validate
+the pipeline (``save_pipeline``, the ``crystallize`` gate), never as run
+values.
 """
 
 from __future__ import annotations
@@ -20,13 +26,24 @@ SPEC_VERSION = 1
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
 
-def document(spec: JsonObject, description: str) -> JsonObject:
+def document(
+    spec: JsonObject, description: str, check_params: JsonObject | None = None
+) -> JsonObject:
     """A spec document with a description; a node spec is wrapped."""
     if "root" in spec:
         version, root = spec.get("version"), spec["root"]
     else:
         version, root = SPEC_VERSION, spec
-    return {"version": version, "description": description, "root": root}
+    doc: JsonObject = {"version": version, "description": description, "root": root}
+    if check_params:
+        doc["check_params"] = check_params
+    return doc
+
+
+def check_params(doc: JsonObject) -> JsonObject | None:
+    """The values that validate a saved pipeline, if any."""
+    values = doc.get("check_params")
+    return cast(JsonObject, values) if isinstance(values, dict) else None
 
 
 def save(directory: Path, name: str, doc: JsonObject, *, replace: bool) -> Path:

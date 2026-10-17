@@ -14,14 +14,14 @@ import sys
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Annotated, cast
 
 import anyio
 from ico.tools.board import BoardRuns, LiveBoard  # pyright: ignore[reportMissingTypeStubs]  # ico.tools is a namespace package
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, WithJsonSchema
 
 from ico_mcp import drafts, pipelines
 from ico_mcp.config import Config, ConfigError, load_config
@@ -39,7 +39,8 @@ Build and run data pipelines from a registry of typed operators. The guide
 tool returns the full reference (spec kinds and params, errors, writing
 operators and types, runs); call it whenever these notes are not enough.
 
-1. Look for a saved pipeline first (list_pipelines, get_pipeline).
+1. Look for a saved pipeline first (list_pipelines shows its parameters)
+   and run it by name: run(pipeline=name, input=..., params={...}).
 2. Otherwise compose one from existing operators: search_operators step by
    step (by input_type / output_type / text / tags), then validate, then run.
    Specs are JSON: {"kind": "op", "op": "name@version", "params": {...}} for
@@ -78,12 +79,33 @@ GUIDE = "docs/agent-guide.md"
 """The agent guide, relative to the repository root (a clone extends it)."""
 
 
+JsonInput = Annotated[
+    JsonValue,
+    WithJsonSchema(
+        {
+            "anyOf": [
+                {"type": "string"},
+                {"type": "number"},
+                {"type": "integer"},
+                {"type": "boolean"},
+                {"type": "object"},
+                {"type": "array"},
+                {"type": "null"},
+            ],
+            "description": "A JSON value; a path is a plain string, not quoted.",
+        }
+    ),
+]
+"""A JSON value with an explicit schema: without one, clients pass strings
+with their quotes."""
+
+
 class OperatorExample(BaseModel):
     """Applying operator `ref` to `input` must return `output`."""
 
     ref: str
-    input: JsonValue = None
-    output: JsonValue = None
+    input: JsonInput = None
+    output: JsonInput = None
 
 
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -109,6 +131,14 @@ def create_server(config: Config) -> MCPServer[None]:
             await kernel.aclose()
 
     server = MCPServer[None](config.name, instructions=INSTRUCTIONS, lifespan=lifespan)
+
+    async def check(doc: JsonObject) -> JsonObject:
+        """Validate a pipeline document with its ``check_params``."""
+        request: JsonObject = {"spec": doc}
+        values = pipelines.check_params(doc)
+        if values is not None:
+            request["params"] = values
+        return await call("validate", request)
 
     async def call(method: str, params: JsonObject) -> JsonObject:
         with tool_errors():
@@ -204,27 +234,56 @@ def create_server(config: Config) -> MCPServer[None]:
         return await call("type", {"name": name})
 
     @server.tool(annotations=READ_ONLY)
-    async def validate(spec: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        """Check a spec without running it; issues carry spec paths."""
-        return await call("validate", {"spec": spec})
+    async def validate(
+        spec: dict[str, JsonValue], params: dict[str, JsonValue] | None = None
+    ) -> dict[str, JsonValue]:
+        """Check a spec without running it; issues carry spec paths.
+
+        `params` gives values for the pipeline parameters (`{"$param": ...}`
+        references) without a default; missing ones are reported. The
+        result also lists the parameters the spec declares.
+        """
+        request: JsonObject = {"spec": spec}
+        if params is not None:
+            request["params"] = params
+        return await call("validate", request)
 
     @server.tool(annotations=WRITES)
     async def run(
         ctx: Context,
-        spec: dict[str, JsonValue],
-        input: JsonValue = None,
+        spec: dict[str, JsonValue] | None = None,
+        pipeline: str | None = None,
+        input: JsonInput = None,
+        params: dict[str, JsonValue] | None = None,
         max_items: int | None = None,
         wait: bool = True,
     ) -> dict[str, JsonValue]:
-        """Run a spec once on a JSON input; returns outputs and per-item errors.
+        """Run a spec, or a saved pipeline by name, once on a JSON input;
+        returns outputs and per-item errors.
 
-        Large data goes by reference: pass paths, get paths back. Each run
-        has a kernel process of its own. With `wait=false` the call returns
-        the `run_id` at once: poll `run_status`, stop with `cancel_run`.
-        With a progress token, the first progress node of the flow is
-        reported. `dashboard` is the URL of the page with the progress of
-        every node.
+        Give exactly one of `spec` and `pipeline`. `params` gives values for
+        the pipeline parameters (`{"$param": ...}` references; defaults
+        apply to the others). Pass a string input as is, e.g. /data/a.mp4,
+        not quoted. Large data goes by reference: pass paths, get paths
+        back. Each run has a kernel process of its own. With `wait=false`
+        the call returns the `run_id` at once: poll `run_status`, stop with
+        `cancel_run`. With a progress token, the first progress node of the
+        flow is reported. `dashboard` is the URL of the page with the
+        progress of every node.
         """
+        if (spec is None) == (pipeline is None):
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": "give exactly one of spec and pipeline",
+                    }
+                )
+            )
+        if pipeline is not None:
+            with tool_errors():
+                spec = _saved(config, pipeline)
+        assert spec is not None
         reporter = ProgressReporter()
 
         async def on_progress(snapshot: JsonObject) -> None:
@@ -233,7 +292,14 @@ def create_server(config: Config) -> MCPServer[None]:
                 # A no-op unless the client sent a progress token.
                 await ctx.report_progress(status.progress, status.total, status.message)
 
-        job = jobs.start(spec, input, max_items, on_progress if wait else None)
+        job = jobs.start(
+            spec,
+            input,
+            max_items,
+            on_progress if wait else None,
+            pipeline=pipeline,
+            values=params,
+        )
         if not wait:
             return {"run_id": job.id, "state": "running", "dashboard": board.url}
         await job.finished.wait()
@@ -281,17 +347,22 @@ def create_server(config: Config) -> MCPServer[None]:
         spec: dict[str, JsonValue],
         description: str,
         replace: bool = False,
+        params: dict[str, JsonValue] | None = None,
     ) -> dict[str, JsonValue]:
         """Save a spec under a name; it must validate without errors.
 
-        An existing pipeline is overwritten only with `replace=true`.
+        The spec keeps its `{"$param": ...}` references. `params` gives
+        values for the parameters without a default: they are needed to
+        validate the pipeline, saved as its `check_params` and never used as
+        run values. An existing pipeline is overwritten only with
+        `replace=true`.
         """
-        doc = pipelines.document(cast(JsonObject, spec), description)
+        doc = pipelines.document(cast(JsonObject, spec), description, params)
         with tool_errors():
             existed = pipelines.exists(config.pipelines_dir, name)
             if existed and not replace:
                 raise pipelines.exists_error(name)
-        checked = await call("validate", {"spec": doc})
+        checked = await check(doc)
         issues = cast(list[JsonObject], checked["issues"])
         errors = [issue for issue in issues if issue.get("severity") == "error"]
         if errors:
@@ -311,27 +382,46 @@ def create_server(config: Config) -> MCPServer[None]:
             "name": name,
             "path": str(path.relative_to(config.root)),
             "replaced": existed,
+            "params": checked.get("params"),
         }
 
     @server.tool(annotations=READ_ONLY)
     async def list_pipelines() -> dict[str, JsonValue]:
-        """Saved pipelines with their descriptions."""
+        """Saved pipelines with their descriptions and parameters (name,
+        required, default)."""
         directory = config.pipelines_dir
         items: list[JsonValue] = []
         for name in pipelines.names(directory):
             doc = pipelines.load(directory, name)
-            items.append({"name": name, "description": pipelines.description(doc)})
+            item: JsonObject = {"name": name, "description": pipelines.description(doc)}
+            try:
+                declared = (await check(doc)).get("params")
+            except ToolError as e:  # e.g. an operator was removed
+                item["params"], item["error"] = None, str(e)
+            else:
+                item["params"] = [
+                    {k: p[k] for k in ("name", "required", "default") if k in p}
+                    for p in cast(list[JsonObject], declared or [])
+                ]
+            items.append(item)
         return {"pipelines": items}
 
     @server.tool(annotations=READ_ONLY)
     async def get_pipeline(name: str) -> dict[str, JsonValue]:
-        """A saved pipeline: its description and spec document."""
+        """A saved pipeline: its description, spec document, the parameters
+        it declares and the values that validate it (`check_params`)."""
         with tool_errors():
             doc = pipelines.load(config.pipelines_dir, name)
+        try:
+            declared = (await check(doc)).get("params")
+        except ToolError:
+            declared = None
         return {
             "name": name,
             "description": pipelines.description(doc),
             "spec": {"version": doc.get("version"), "root": doc.get("root")},
+            "params": declared,
+            "check_params": pipelines.check_params(doc),
         }
 
     @server.tool(annotations=WRITES)
@@ -380,6 +470,18 @@ def create_server(config: Config) -> MCPServer[None]:
         return {**cast(JsonObject, report), "drafts": retired}
 
     return server
+
+
+def _saved(config: Config, name: str) -> JsonObject:
+    """The document of a saved pipeline; ``not_found`` lists the saved ones."""
+    try:
+        return pipelines.load(config.pipelines_dir, name)
+    except KernelError as e:
+        if e.code != "not_found":
+            raise
+        saved: list[JsonValue] = []
+        saved.extend(pipelines.names(config.pipelines_dir))
+        raise KernelError(e.code, e.message, {"name": name, "saved": saved}) from None
 
 
 @contextmanager

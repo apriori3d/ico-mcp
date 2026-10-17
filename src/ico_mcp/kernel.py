@@ -38,7 +38,7 @@ from ico import (
 )
 from ico.core.signature_utils import format_ico_type  # pyright: ignore[reportMissingTypeStubs]  # ico.core is a namespace package
 from ico.registry import RegistryEntry, default_registry, load_operators
-from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run
+from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
 from ico.spec.run import DEFAULT_MAX_ITEMS
 
 from ico_mcp.config import Config, load_config
@@ -189,23 +189,36 @@ class Kernel:
         return {"types": cards, "operators": refs}
 
     def validate(self, params: JsonObject) -> JsonValue:
+        """Signature issues of a spec built with ``params``, and the pipeline
+        parameters it declares (also when values are missing)."""
+        spec = _spec(params)
+        values = _values(params)
+        declared: JsonValue = None
+        issues: list[JsonValue] = []
         try:
-            flow = build(_spec(params))
+            found: list[JsonValue] = []
+            found.extend(p.to_dict() for p in spec_params(spec))
+            declared = found
+            flow = build(spec, params=values)
         except SpecError as e:
-            issues: list[JsonValue] = [{"severity": "error", **_spec_error(e)}]
-            return {"issues": issues}
-        issues = []
+            issues.append({"severity": "error", **_spec_error(e)})
+            return {"issues": issues, "params": declared}
         issues.extend(_issue(issue) for issue in validate_signatures(flow))
-        return {"issues": issues}
+        return {"issues": issues, "params": declared}
 
     def run(self, params: JsonObject) -> JsonValue:
         spec = _spec(params)
         max_items = _positive_int(params, "max_items", DEFAULT_MAX_ITEMS)
-        self._send_plan(spec)
+        values = _values(params)
+        self._send_plan(spec, values)
         progress = JsonProgressTool(self._progress(self.request_id))
         try:
             result = run(
-                spec, params.get("input"), max_items=max_items, tools=[progress]
+                spec,
+                params.get("input"),
+                max_items=max_items,
+                tools=[progress],
+                params=values,
             )
         except SpecError as e:
             raise KernelError("spec_error", str(e), _spec_error(e)) from None
@@ -215,11 +228,13 @@ class Kernel:
             ) from None
         return result.to_dict()
 
-    def _send_plan(self, spec: PipelineSpec | NodeSpec) -> None:
-        """Notify the plan of a spec; a spec that does not build fails in
-        ``run`` with a located error instead."""
+    def _send_plan(
+        self, spec: PipelineSpec | NodeSpec, values: JsonObject | None
+    ) -> None:
+        """Notify the plan of a spec with the run's parameter values; a spec
+        that does not build fails in ``run`` with a located error instead."""
         try:
-            plan = cast(JsonObject, plan_view(build(spec)))
+            plan = cast(JsonObject, plan_view(build(spec, params=values)))
         except Exception:
             return
         params: JsonObject = {"request": self.request_id, "plan": plan}
@@ -259,6 +274,11 @@ def _positive_int(params: JsonObject, key: str, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise KernelError("bad_request", f"'{key}' must be a positive integer")
     return value
+
+
+def _values(params: JsonObject) -> JsonObject | None:
+    """The values of the pipeline parameters (``params.params``), if given."""
+    return cast(JsonObject | None, _optional(params, "params", dict))
 
 
 def _spec(params: JsonObject) -> PipelineSpec | NodeSpec:
