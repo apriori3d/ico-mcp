@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Annotated, cast
 
 import anyio
-from ico.tools.board import BoardRuns, LiveBoard  # pyright: ignore[reportMissingTypeStubs]  # ico.tools is a namespace package
+from ico.tools.board import BoardRuns, LiveBoard
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations

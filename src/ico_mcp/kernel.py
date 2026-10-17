@@ -36,7 +36,7 @@ from ico import (
     plan_view,
     validate_signatures,
 )
-from ico.core.signature_utils import format_ico_type  # pyright: ignore[reportMissingTypeStubs]  # ico.core is a namespace package
+from ico.core.signature_utils import format_ico_type
 from ico.registry import RegistryEntry, default_registry, load_operators
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
 from ico.spec.run import DEFAULT_MAX_ITEMS

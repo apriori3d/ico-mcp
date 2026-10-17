@@ -21,8 +21,8 @@ from typing import Self, cast
 import anyio
 from anyio.abc import TaskGroup
 from ico import PlanView
-from ico.tools.board import BoardRun, BoardRuns  # pyright: ignore[reportMissingTypeStubs]  # ico.tools is a namespace package
-from ico.tools.board.runs import ProgressSnapshot  # pyright: ignore[reportMissingTypeStubs]
+from ico.tools.board import BoardRun, BoardRuns
+from ico.tools.board.runs import ProgressSnapshot
 
 from ico_mcp import traces
 from ico_mcp.config import Config
