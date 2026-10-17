@@ -1,35 +1,88 @@
 # ico-mcp: guide for agents
 
 This server builds and runs data pipelines from a registry of typed ICO
-operators. The server `instructions` are the short version; this guide is
-the reference. Read the part you need.
+operators. Operators are not MCP tools: you find them as **cards** with
+`search_operators`, combine them into a JSON **spec**, and run the spec.
+When a step is missing you **write** the operator (and its types) as a
+draft. Drafts that prove useful are **crystallized** into stable operators
+through a pull request the human reviews.
 
-## 1. Workflow
+Read sections 0–2 before your first spec. Read section 4 before your first
+`propose_operator`.
 
-1. **Saved pipeline first.** `list_pipelines`, then `get_pipeline(name)`.
-   If one fits, `run` it as is.
-2. **Compose from existing operators.** Search step by step:
-   `search_operators(input_type=..., output_type=...)` finds direct
-   converters; `text` and `tags` narrow the search. Cards show `sig`
-   (`str → list[str]`), `description`, `tags`, `status`
-   (`draft` / `stable`). `get_operator(ref)` adds the source code: read it
-   only to write or fix an operator.
-3. **Validate, then run.** `validate(spec)` reports every type mismatch at
-   once, with the location in the spec. Fix all errors before `run`.
-   Warnings ("signature could not be inferred") mean a link was not
-   checked; the run may still work.
-4. **Write an operator only when a step is missing**
-   (`propose_operator`, section 4). Reuse types first (section 5).
-5. **Save what works.** When a pipeline is likely to be reused:
-   `save_pipeline(name, spec, description)`.
-6. **Crystallize with the human's consent.** Suggest `crystallize` for the
-   draft operators of a pipeline that proved useful. It pushes a branch and
-   opens a pull request, so ask first. After the human merges and pulls,
-   call `reload`.
+## 0. Quick start
 
-Types are referred to by short name (`Report`), by `module:qualname`
-(`domain.text:Report`) when a short name is ambiguous (the error lists the
-candidates), or as cards print them (`list[Report]`).
+```
+list_pipelines ──found──→ get_pipeline → run
+      │ none
+      ▼
+search_operators (input_type / output_type / text / tags)
+      │ a step is missing
+      ├────────────→ list_types → propose_types → propose_operator (+ examples)
+      ▼
+validate (fix every error) → run (small input first, then wait=false)
+      ▼
+save_pipeline → ask the human → crystallize → (merge) → reload
+```
+
+Minimal session:
+
+1. `list_pipelines`. Empty, or nothing fits → compose.
+2. `search_operators()` with no arguments lists the whole registry (cards
+   carry `total`); then search by type: `input_type="str"`,
+   `output_type="VideoRef"`.
+3. Write the spec, `validate` it, `run` it on one small input.
+4. Missing step → write it (section 4), call `validate` again.
+
+## 1. Mental model
+
+**A pipeline is one function from a JSON input to JSON outputs.**
+
+- `run(spec, input)` passes `input` to the first node **as is**: a JSON
+  string stays `str`, an object stays `dict`. It is **never decoded into a
+  domain type**. A flow that works on a `VideoRef` starts with an operator
+  `str → VideoRef` (or `dict → VideoRef`).
+- The last node must return JSON-compatible values (str, int, float,
+  bool, None, list, dict; tuples become lists). A dataclass output is an
+  error: `output of type V is not JSON-compatible`. End the flow with an
+  operator that writes the result to disk and returns its path or a short
+  summary dict.
+- Between nodes any Python object flows (numpy arrays, models, frames).
+  Only the two ends are JSON.
+
+**Many items are an `Iterator`, not a `list`.**
+
+- `seq` feeds one output to the next input. It never loops.
+- To apply a step to every item, the producer returns `Iterator[T]` and
+  the step goes inside a `stream` node: `Iterator[T] → Iterator[U]`.
+- `list[T]` does **not** feed a `stream`:
+  `expected Iterator[str], got list[str]`. Producers that make many items
+  return `Iterator[T]`; an operator that needs all items at once takes
+  `Iterator[T]` (or a `list[T]` from an operator that collects them).
+- A top-level iterator output is consumed to the end; `run` returns the
+  first `max_items` items, `total` and `truncated`.
+
+**Typing is checked at the links.** Each link `A → B` needs
+`A.output` to match `B.input` exactly or as a subclass; generic arguments
+must be equal (`list[bool]` does not match `list[int]`). `validate`
+reports every mismatch; `run` refuses to start on the first one.
+
+**Where the code runs.** Each `run` starts a kernel process of its own
+with the server's Python environment, in the server repository's root as
+the working directory, with an allowlisted environment (`PATH`, `HOME`,
+`TMPDIR`, `LANG`, `LC_ALL`, `VIRTUAL_ENV` plus `ico.toml` `env`).
+Consequences:
+
+- **Use absolute paths** in inputs and outputs: relative paths resolve
+  against the server repository, not your project.
+- External programs on `PATH` (e.g. `ffmpeg`) can be called with
+  `subprocess`.
+- Python packages are those of the server project. A missing package
+  (`load` stage: `ModuleNotFoundError`) is not yours to install: tell the
+  human which package to add to the server's `pyproject.toml`; after
+  `uv sync` call `reload`.
+- Runs time out after `ico.toml` `timeouts.run` seconds (default 600);
+  long runs go with `wait=false`.
 
 ## 2. Specs
 
@@ -37,16 +90,10 @@ A spec is JSON: a single node, or a document `{"version": 1, "root": node}`.
 Every node has a `kind`; most have `children` and `params`; any node may
 have a `name` (shown on the dashboard and in errors).
 
-```json
-{"kind": "seq", "children": [
-  {"kind": "op", "op": "load_text@1"},
-  {"kind": "op", "op": "split_words@1"}
-]}
-```
-
 Leaves are registered operators: `{"kind": "op", "op": "name@version"}`.
-An operator registered as a class takes its constructor arguments as
-`params`: `{"kind": "op", "op": "resize@1", "params": {"width": 256}}`.
+A class operator takes its constructor arguments as `params` (the card
+lists them under `params` with type, `required` and `default`):
+`{"kind": "op", "op": "resize@1", "params": {"width": 256}}`.
 Never `ref`, never a function name: only `op` with `name@version`.
 
 | kind | children | params | does |
@@ -55,11 +102,11 @@ Never `ref`, never a function name: only `op` with `name@version`.
 | `seq` | ≥ 2 | – | chain: each output feeds the next input |
 | `pipeline` | ≥ 1 | – | chain of `T → T` steps on the same type |
 | `stream` | 1 | – | apply the child to each item: `Iterator[I] → Iterator[O]` |
-| `async_stream` | see below | `pool_size` (int), `ordered` (bool), `factory` (bool), `on_error` (`raise` / `skip` / `collect`, default `raise`), `retry` (optional) | parallel `stream` over a pool of workers |
+| `async_stream` | see below | `pool_size` (int), `ordered` (bool), `factory` (bool), `on_error` (`raise` / `skip` / `collect`), `retry` | parallel `stream` over a pool of workers |
 | `worker` | 1 | `type`: `"ico.runtime.worker.mp.mp_worker:MPWorker"` | run the child flow in a separate process |
 | `fork` | ≥ 2 | – | feed one input to every branch, return a tuple of outputs |
 | `route` | key op, one per key, + default | `keys` (list of JSON scalars), `default` (bool) | the key op maps an item to a key; the item goes to that key's branch |
-| `filter` | 1 (predicate) | – | keep the stream items for which the predicate is true |
+| `filter` | 1 (predicate `T → bool`) | – | keep the stream items for which the predicate is true |
 | `partition` | 1 (predicate) | – | split a stream into `(matching, rest)` lists |
 | `batcher` | – | `batch_size` (int), `drop_last` (bool) | group stream items into batches |
 | `process` | 1 (body) | `num_iterations` (int) | apply the body that many times |
@@ -67,31 +114,41 @@ Never `ref`, never a function name: only `op` with `name@version`.
 | `progress` | – | `total` (number) | count the items passing by (dashboard, MCP progress) |
 | `identity` | – | – | pass items through |
 
-`async_stream`: with `"factory": true` it has one child, the worker flow,
-and every pool slot gets a fresh copy (`pool_size` copies); with
-`"factory": false` it has exactly `pool_size` children. `retry` is
-`{"max_retries": int, "delay": number, "backoff": number, "retry_on":
-["builtins:TimeoutError"]}` (builtin exception types only).
+Any other `kind` fails with `Cannot build node of kind '…' yet`: there is
+no `map` / `foreach` / `par`; use `stream`, `async_stream` and `fork`.
 
-**Progress.** A progress node counts the items that pass it, so put it
-inside the stream it measures, with a `total` if known:
+`async_stream`: with `"factory": true` it has one child, the worker flow,
+and every pool slot gets a fresh copy; with `"factory": false` it has
+exactly `pool_size` children. `retry` is `{"max_retries": int, "delay":
+number, "backoff": number, "retry_on": ["builtins:TimeoutError"]}`
+(builtin exception types only).
+
+### Patterns
+
+Per-item work with progress (put `progress` **inside** the stream):
 
 ```json
 {"kind": "seq", "children": [
-  {"kind": "op", "op": "words@1"},
+  {"kind": "op", "op": "list_videos@1", "params": {"pattern": "*.mp4"}},
   {"kind": "stream", "children": [{"kind": "seq", "children": [
-    {"kind": "progress", "name": "words", "params": {"total": 40}},
-    {"kind": "op", "op": "upper@1"}]}]}
+    {"kind": "progress", "name": "videos"},
+    {"kind": "op", "op": "remove_subtitles@1"}
+  ]}]}
 ]}
 ```
 
-Before the stream it would count the whole iterator as one item. The first
-progress node of a flow is also reported as MCP progress.
+The same in parallel processes, one copy of the flow per worker, per-item
+errors collected instead of stopping the run:
 
-**Parallel work in processes.** Wrap the per-item flow in a `worker` inside
-an `async_stream` with `"factory": true`; register heavy operators as
-classes that load models lazily (on first call), so each worker loads its
-own copy.
+```json
+{"kind": "async_stream",
+ "params": {"pool_size": 4, "factory": true, "ordered": true, "on_error": "collect"},
+ "children": [{"kind": "worker",
+   "params": {"type": "ico.runtime.worker.mp.mp_worker:MPWorker"},
+   "children": [{"kind": "op", "op": "remove_subtitles@1"}]}]}
+```
+
+Two analyses of one input: `fork` returns a tuple, i.e. a JSON list.
 
 ## 3. Errors
 
@@ -100,99 +157,168 @@ Errors are JSON. Read the fields; do not guess.
 - `validate` issues: `severity` (`error` / `warning`), `path` (the node in
   the spec tree: `"1"` is the second child of the root, `"0.2"` the third
   child of the first child), `expected` and `got` (types), `refs` (the two
-  operators of the link) and a readable `message`:
-  `at 1 (count_words@1 → shout@1): expected str, got int`.
-- `run`: `spec_error` (the spec does not build: same fields as above),
-  `run_error` (an exception; `traceback` is in the data), `timeout` (the
-  run's kernel was killed after the configured timeout), `crashed` (the
-  process exited; `stderr` tail in the data). Per-item errors of
-  `on_error: "collect"` streams are in the result's `errors`.
+  operators of the link) and a readable `message`.
+  A warning "signature could not be inferred" means a link was not
+  checked; the run may still work.
+- `run`: `spec_error` (the spec does not build, or a non-JSON output),
+  `run_error` (an exception; `traceback` is in the data), `timeout`,
+  `crashed` (the process exited; `stderr` tail in the data). Per-item
+  errors of `on_error: "collect"` streams are in the result's `errors`.
 - `propose_operator` / `propose_types`: `stage` tells what failed:
-  `write` (module name, or an absolute import of the draft package: use the
-  `fix` it gives), `typecheck` (pyright diagnostics with `file`, `line`,
-  `rule`), `load` (import error), `register` (no operator, or `Any` in a
-  signature), `types` (no public class, or operators in a types module),
-  `examples` (each failing example with `expected` and `got`). The file
-  stays in the draft package: fix it with another proposal of the same
-  module.
+  `write`, `typecheck` (pyright diagnostics with `file`, `line`, `rule`),
+  `load` (import error, e.g. a missing package: see section 1),
+  `register` (no operator, or `Any` in a signature), `types`, `examples`
+  (each failing example with `expected` and `got`). The file stays in the
+  draft package: fix it with another proposal of the **same module**.
+
+Typical fixes:
+
+| message | fix |
+|---|---|
+| `expected Iterator[X], got list[X]` | return `Iterator[X]` from the producer |
+| `expected X, got Iterator[X]` | wrap the consumer in a `stream` |
+| `expected VideoRef, got str` at the first node | start with a loader `str → VideoRef` |
+| `output of type … is not JSON-compatible` | end with an operator that returns a path or a dict |
+| `Cannot build node of kind 'map'` | use `stream` |
+| `Operator 'x@1' is already registered` | bump the version in a new module |
 
 ## 4. Writing operators
 
+Imports:
+
 ```python
-from ico.registry import register
-
-
-@register("slugify", 1, tags={"text"})
-def slugify(text: str) -> str:
-    """Lower-case words joined by dashes."""  # the card's description
-    return "-".join(text.lower().split())
+from collections.abc import Iterator
+from ico.core.operator import IcoOperator  # base of class operators
+from ico.registry import register           # the decorator
 ```
 
-- One small step per operator, typed input and output. No `Any`: the
-  registry matches operators by type, and `Any` matches nothing usefully.
-- Configuration goes into constructor params of a class operator, never
-  into closures or globals, so a spec can carry it:
+`register(name, version, *, tags=(), caps=(), description=None)`:
 
-  ```python
-  from ico.core.operator import IcoOperator
-  from ico.registry import register
+- `name`: no `@` or whitespace; `version`: a positive int.
+- `tags`: free labels for search (`{"video", "ocr"}`).
+- `caps`: what the operator needs from its environment, free strings
+  shown on the card: `"gpu"`, `"network"`, `"subprocess:ffmpeg"`.
+- The first paragraph of the docstring is the card's `description`:
+  write what it does and what the output means.
+- Do not set `status`: the location decides it (draft package → `draft`).
 
+**A function** when there is nothing to configure:
 
-  @register("resize", 1, tags={"image"})
-  class Resize(IcoOperator[ImageRef, ImageRef]):
-      """Resize an image to a width, keeping the aspect ratio."""
+```python
+@register("probe_video", 1, tags={"video"}, caps={"subprocess:ffprobe"})
+def probe_video(video: VideoRef) -> VideoInfo:
+    """Width, height, fps and duration of a video (ffprobe)."""
+    ...
+```
 
-      def __init__(self, width: int) -> None:
-          self.width = width
-          super().__init__(fn=self._apply)
+**A class** when the operator has configuration. Every `__init__`
+parameter is stored in an attribute of the same name (the spec captures
+them from there), no `*args` / `**kwargs`, JSON-compatible defaults:
 
-      def _apply(self, image: ImageRef) -> ImageRef: ...
-  ```
+```python
+@register("detect_text", 1, tags={"video", "ocr"}, caps={"gpu"})
+class DetectText(IcoOperator[FrameRef, TextBoxes]):
+    """Text boxes in a frame, by an OCR detector."""
 
-- Heavy models load lazily, on first use, not at import or construction.
-- Return iterators (`Iterator[T]`) for operators that produce many items;
-  streams process them item by item.
-- Give `examples` (`{"ref", "input", "output"}`) for operators with JSON
-  inputs and outputs. They are checked on proposal, saved, and become the
-  tests of the operator when it is crystallized.
-- A stable operator is never edited: register a new version
-  (`@register("slugify", 2)`) in a new draft module.
-- `typecheck` (pyright) is on by default; keep it on.
+    def __init__(self, languages: list[str], min_score: float = 0.5) -> None:
+        self.languages = languages
+        self.min_score = min_score
+        self._model: Detector | None = None  # loaded on first call
+        super().__init__(fn=self._apply)
+
+    def _apply(self, frame: FrameRef) -> TextBoxes:
+        if self._model is None:
+            self._model = load_detector(self.languages)  # lazy: once per worker
+        ...
+```
+
+Instances are created whenever a flow is built (once per worker), so
+heavy work never happens at import or in `__init__`.
+
+**A producer** of many items returns an iterator:
+
+```python
+@register("list_videos", 1, tags={"video", "io"})
+class ListVideos(IcoOperator[str, Iterator[VideoRef]]):
+    """Videos in a directory matching a glob pattern, sorted by name."""
+
+    def __init__(self, pattern: str = "*.mp4") -> None:
+        self.pattern = pattern
+        super().__init__(fn=self._apply)
+
+    def _apply(self, directory: str) -> Iterator[VideoRef]:
+        for path in sorted(Path(directory).glob(self.pattern)):
+            yield VideoRef(path=str(path.resolve()))
+```
+
+**Boundary operators.** A flow starts with a loader from JSON (`str`,
+`dict`) and ends with a writer to JSON (a path, a summary `dict`). Writers
+take the output location as a param (`out_dir`) and return absolute paths.
+
+Rules:
+
+- One small step per operator, typed input and output. No `Any`.
+- Configuration in constructor params, never in closures or globals.
+- Never edit a registered version that others may use: register
+  `name@2` in a new draft module.
+- Keep `typecheck` on (pyright strict). Untyped third-party libraries
+  need `cast` or a narrow wrapper typed by you.
+
+**Examples** (`examples=[{"ref", "input", "output"}]`) are run as the
+spec `{"kind": "op", "op": ref}` on `input`, and must give exactly one
+output equal to `output`. So they fit operators with JSON input and JSON
+output and a single result; give them for those. For operators on domain
+types, check them with a small `run` of a spec that starts with a loader
+and ends with a writer instead. Examples become the operator's tests on
+`crystallize`.
 
 ## 5. Types and imports
 
-- Look for a type before writing one: `list_types`, `get_type(name)`
-  (fields and docstring).
-- New types go into a types-only module with `propose_types`: immutable
-  dataclasses (`@dataclass(frozen=True)`) or Pydantic models, with a
-  docstring.
-- Large data crosses the pipeline boundary by reference: a path or URI in
-  a type such as `ImageRef(path: str)`, never bytes in JSON. Inside a
-  pipeline, data may stay in memory (e.g. a `Frame` with a pixel array).
-- Draft modules import each other **relatively**
-  (`from .frames import Frame`) and the stable package **absolutely**
-  (`from <package>.frames import Frame`). Absolute imports of the draft
-  package are rejected. This lets crystallization move files unchanged.
+- Look for a type first: `list_types`, `get_type(name)`.
+- New types go into a **types-only** module with `propose_types`:
+  immutable `@dataclass(frozen=True)` or Pydantic models, with a
+  docstring. Operator modules import them.
+- Large data at the pipeline boundary goes by reference: a type such as
+  `VideoRef(path: str)`, never bytes. Inside a pipeline it may stay in
+  memory (`Frame` with a numpy array).
+- Imports between drafts are **relative** (`from .media import VideoRef`);
+  imports of the stable package are **absolute**
+  (`from <package>.media import VideoRef`). An absolute import of the
+  draft package is rejected at the `write` stage.
+
+```python
+# propose_types(module="media", code=...)
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class VideoRef:
+    """A video file on disk, by absolute path."""
+
+    path: str
+```
 
 ## 6. Runs and the dashboard
 
-- `run(spec, input)` returns `outputs` (the first `max_items` items of an
-  iterator output), `total`, `truncated`, per-item `errors`, the `run_id`
-  and the `dashboard` URL. Inputs and outputs are JSON; pass paths.
-- Each run has a process of its own. For a long run use
-  `run(..., wait=false)`: it returns the `run_id` at once. Poll
+- `run(spec, input)` returns `outputs`, `total`, `truncated`, per-item
+  `errors`, the `run_id` and the `dashboard` URL.
+- First run on the smallest input (one file, a few seconds of video).
+- Long run: `run(..., wait=false)` returns the `run_id` at once; poll
   `run_status(run_id)` (state `running` / `done` / `failed`, progress of
-  every node, `summary`, and `result` or `kernel_error` once finished);
-  stop it with `cancel_run(run_id)`. Search, validate and proposals keep
-  working while a run is going.
-- The dashboard shows every progress node and the pipeline plan of active
-  and recent runs. Give the human its URL (`dashboard` tool, or the
-  `dashboard` field of a run result); it opens in any browser, and in the
-  desktop app's browser pane.
+  every node, `result` or `kernel_error` once finished) at a pace that
+  fits the work; `cancel_run(run_id)` kills it.
+- Give the human the dashboard URL; it shows every progress node and the
+  plan of active and recent runs.
 
-## 7. Domain notes
+## 7. Saving and crystallizing
 
-This section belongs to the domain. A clone of this repository describes
-here its data, formats, conventions and typical pipelines, e.g. where the
-input files live, which types to use for them, and naming rules for
-operators.
+- `save_pipeline(name, spec, description)` when the pipeline will be
+  reused; it must validate. `replace=true` to overwrite.
+- `crystallize(refs, title, summary, pipelines)` opens a pull request that
+  makes the drafts stable. It pushes a branch: **ask the human first**.
+  After they merge and pull, call `reload`.
+
+## 8. Domain notes
+
+This section belongs to the domain: data locations, formats, types to use,
+naming rules, typical pipelines.

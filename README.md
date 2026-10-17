@@ -130,7 +130,7 @@ was installed from.
 4. Edit `pyproject.toml`: the project `name`, and add the domain's
    dependencies (e.g. torch); operators run with the same environment.
 5. Delete the demo draft `domain_draft/demo.py` and its example.
-6. Write the domain's notes into section 7 of `docs/agent-guide.md`: data
+6. Write the domain's notes into section 8 of `docs/agent-guide.md`: data
    locations, formats, conventions, typical pipelines. Agents read it with
    the `guide` tool.
 7. Keep `tests/test_domain_examples.py`: it runs the examples of every
