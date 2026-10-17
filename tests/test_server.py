@@ -24,6 +24,9 @@ TOOLS = {
     "get_pipeline",
     "reload",
     "propose_operator",
+    "propose_types",
+    "list_types",
+    "get_type",
 }
 
 
@@ -75,6 +78,8 @@ async def test_tools_and_instructions(config: Config) -> None:
         "validate",
         "list_pipelines",
         "get_pipeline",
+        "list_types",
+        "get_type",
     }
 
 

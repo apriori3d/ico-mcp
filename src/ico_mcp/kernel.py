@@ -33,6 +33,7 @@ from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run
 from ico.spec.run import DEFAULT_MAX_ITEMS
 
 from ico_mcp.config import Config, load_config
+from ico_mcp.domain_types import DomainType, collect
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError, decode, encode
 from ico_mcp.type_names import TypeIndex
 
@@ -58,12 +59,17 @@ class Kernel:
         self.config = config
         self.notify = notify
         self.request_id: JsonValue = None
-        self.types = TypeIndex(())
+        self.types = TypeIndex((), "")
+        self.domain_types: list[DomainType] = []
+        self.domain_index = TypeIndex((), "")
         self.handlers: dict[str, Handler] = {
             "load": self.load,
             "search": self.search,
             "card": self.card,
             "module_cards": self.module_cards,
+            "types": self.list_types,
+            "type": self.type_card,
+            "module_types": self.module_types,
             "validate": self.validate,
             "run": self.run,
         }
@@ -94,7 +100,23 @@ class Kernel:
         """Load the stable and the draft package."""
         stable = load_operators(self.config.stable_dir, status="stable")
         draft = load_operators(self.config.draft_dir, status="draft")
-        self.types = TypeIndex(entry.signature for entry in default_registry)
+        packages = {
+            self.config.stable_dir.name: "stable",
+            self.config.draft_dir.name: "draft",
+        }
+        operators = {entry.cls for entry in default_registry if entry.cls is not None}
+        self.domain_types = collect(packages, operators)
+        domain = [t.cls for t in self.domain_types]
+        signatures = [
+            tp
+            for entry in default_registry
+            for tp in (entry.signature.i, entry.signature.o)
+        ]
+        self.types = TypeIndex(
+            [*signatures, *domain],
+            "not a domain type and in no registered signature",
+        )
+        self.domain_index = TypeIndex(domain, "not a domain type (see list_types)")
         return {"stable": stable.to_dict(), "draft": draft.to_dict()}
 
     def search(self, params: JsonObject) -> JsonValue:
@@ -135,6 +157,27 @@ class Kernel:
             entry.ref for entry in entries if _ANY.search(entry.signature.format())
         )
         return {"cards": cards, "any": any_refs}
+
+    def list_types(self, params: JsonObject) -> JsonValue:
+        """Compact cards of all domain types."""
+        cards: list[JsonValue] = []
+        cards.extend(t.card() for t in self.domain_types)
+        return {"types": cards}
+
+    def type_card(self, params: JsonObject) -> JsonValue:
+        """The full card of a domain type, by name as for ``search``."""
+        cls = self.domain_index.resolve(_required(params, "name", str))
+        return next(t for t in self.domain_types if t.cls is cls).card(full=True)
+
+    def module_types(self, params: JsonObject) -> JsonValue:
+        """Full cards of the domain types a module defines, and the refs of
+        the operators it registers."""
+        module = _required(params, "module", str)
+        cards: list[JsonValue] = []
+        cards.extend(t.card(full=True) for t in self.domain_types if t.module == module)
+        refs: list[JsonValue] = []
+        refs.extend(entry.ref for entry in default_registry if entry.module == module)
+        return {"types": cards, "operators": refs}
 
     def validate(self, params: JsonObject) -> JsonValue:
         try:

@@ -113,6 +113,107 @@ async def test_bad_params_and_method(config: Config) -> None:
     assert bad_limit.code == bad_method.code == "bad_request"
 
 
+# ─── Domain types ───
+
+FRAMES = '''
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Frame:
+    """A video frame.
+
+    Pixels stay in memory inside a pipeline.
+    """
+
+    path: str
+    index: int
+    tags: list[str]
+
+
+class Model:
+    """Not a dataclass: no fields."""
+
+    model_fields = {"name": None}
+    name: str
+
+
+class Plain:
+    """A plain class."""
+
+
+class _Hidden:
+    pass
+'''
+
+
+async def test_types_without_signatures_are_listed(config: Config) -> None:
+    (config.draft_dir / "frames.py").write_text(FRAMES)
+    async with KernelClient(config) as kernel:
+        listed = await request(kernel, "types", {})
+        found = await request(kernel, "search", {"input_type": "Frame"})
+
+    cards = {card["type"]: card for card in listed["types"]}
+    assert list(cards) == [
+        "domain.text:Report",
+        "domain_draft.frames:Frame",
+        "domain_draft.frames:Model",
+        "domain_draft.frames:Plain",
+        "domain_draft.tools:Report",
+    ]
+    assert cards["domain_draft.frames:Frame"] == {
+        "name": "Frame",
+        "type": "domain_draft.frames:Frame",
+        "status": "draft",
+        "doc": "A video frame.",
+    }
+    assert cards["domain.text:Report"]["status"] == "stable"
+    assert found == {"cards": [], "total": 0}
+
+
+async def test_type_card_has_fields(config: Config) -> None:
+    (config.draft_dir / "frames.py").write_text(FRAMES)
+    async with KernelClient(config) as kernel:
+        frame = await request(kernel, "type", {"name": "Frame"})
+        model = await request(kernel, "type", {"name": "Model"})
+        plain = await request(kernel, "type", {"name": "domain_draft.frames:Plain"})
+
+    assert frame["module"] == "domain_draft.frames"
+    assert frame["doc"] == "A video frame.\n\nPixels stay in memory inside a pipeline."
+    assert frame["fields"] == [
+        {"name": "path", "type": "str"},
+        {"name": "index", "type": "int"},
+        {"name": "tags", "type": "list[str]"},
+    ]
+    assert model["fields"] == [{"name": "name", "type": "str"}]
+    assert plain["fields"] is None
+
+
+async def test_type_card_errors(config: Config) -> None:
+    async with KernelClient(config) as kernel:
+        ambiguous = await kernel_error(kernel, "type", {"name": "Report"})
+        library = await kernel_error(kernel, "type", {"name": "str"})
+
+    assert ambiguous.data["candidates"] == [
+        "domain.text:Report",
+        "domain_draft.tools:Report",
+    ]
+    assert library.code == "type_error"
+    assert "not a domain type" in library.message
+
+
+async def test_module_types_lists_types_and_operators(config: Config) -> None:
+    async with KernelClient(config) as kernel:
+        found = await request(kernel, "module_types", {"module": "domain.text"})
+
+    assert [card["name"] for card in found["types"]] == ["Report"]
+    assert sorted(found["operators"]) == [
+        "count_words@1",
+        "make_report@1",
+        "split_words@1",
+    ]
+
+
 # ─── Card ───
 
 

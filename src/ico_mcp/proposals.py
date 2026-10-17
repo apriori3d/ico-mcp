@@ -1,12 +1,20 @@
-"""``propose_operator``: add or replace a draft operator module in stages.
+"""``propose_operator`` / ``propose_types``: add or replace a draft module
+in stages.
 
-write → typecheck → load → register → examples. The first failing stage
-stops the proposal with a :class:`ProposalError`. The file stays in the
-draft package so the agent can fix it; whatever of it loads stays loaded.
+Operators: write → typecheck → load → register → examples. Types: write →
+typecheck → load → types. The first failing stage stops the proposal with a
+:class:`ProposalError`. The file stays in the draft package so the agent can
+fix it; whatever of it loads stays loaded.
+
+Draft modules import each other relatively (``from .frames import Frame``)
+and the stable package absolutely, so that crystallization moves files
+without rewriting them; ``write`` rejects absolute imports of the draft
+package.
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from collections.abc import Sequence
@@ -19,7 +27,7 @@ from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
 from ico_mcp.typecheck import TypecheckError, typecheck
 
-Stage = Literal["write", "typecheck", "load", "register", "examples"]
+Stage = Literal["write", "typecheck", "load", "register", "examples", "types"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,33 +75,7 @@ async def propose(
     Raises:
         ProposalError: At the first failing stage.
     """
-    path = _write(config, module, code)
-
-    warnings: list[JsonObject] = []
-    if check_types:
-        try:
-            diagnostics = await typecheck(config, path)
-        except TypecheckError as e:
-            raise ProposalError("typecheck", str(e)) from None
-        errors = [d for d in diagnostics if d.get("severity") == "error"]
-        if errors:
-            raise ProposalError("typecheck", f"pyright: {len(errors)} error(s)", errors)
-        warnings = [d for d in diagnostics if d.get("severity") != "error"]
-
-    try:
-        report = cast(JsonObject, await kernel.start())
-    except KernelError as e:
-        raise ProposalError("load", e.message, [e.to_dict()]) from None
-    draft = cast(JsonObject, report["draft"])
-    load_errors = [
-        error
-        for error in cast(list[JsonObject], draft["errors"])
-        if Path(str(error.get("file"))).resolve() == path
-    ]
-    if load_errors:
-        raise ProposalError("load", f"{module} failed to import", load_errors)
-
-    name = f"{config.draft_dir.name}.{module}"
+    path, name, warnings = await _load(config, kernel, module, code, check_types)
     found = cast(
         JsonObject, await _request(kernel, "register", "module_cards", {"module": name})
     )
@@ -127,6 +109,77 @@ async def propose(
     }
 
 
+async def propose_types(
+    config: Config,
+    kernel: KernelClient,
+    *,
+    module: str,
+    code: str,
+    check_types: bool = True,
+) -> JsonObject:
+    """Run all stages of a types-only module; returns its type cards.
+
+    Raises:
+        ProposalError: At the first failing stage.
+    """
+    path, name, warnings = await _load(config, kernel, module, code, check_types)
+    found = cast(
+        JsonObject, await _request(kernel, "types", "module_types", {"module": name})
+    )
+    refs = cast(list[str], found["operators"])
+    if refs:
+        raise ProposalError(
+            "types",
+            f"{module} registers operators; put them in a module of their own "
+            "with propose_operator",
+            [{"ref": ref} for ref in refs],
+        )
+    types = cast(list[JsonValue], found["types"])
+    if not types:
+        raise ProposalError("types", f"{module} defines no public class")
+    warnings_out: list[JsonValue] = []
+    warnings_out.extend(warnings)
+    return {
+        "module": name,
+        "path": str(path.relative_to(config.root)),
+        "types": types,
+        "warnings": warnings_out,
+    }
+
+
+async def _load(
+    config: Config, kernel: KernelClient, module: str, code: str, check_types: bool
+) -> tuple[Path, str, list[JsonObject]]:
+    """Stages write, typecheck and load: the file, the module name and the
+    pyright warnings."""
+    path = _write(config, module, code)
+
+    warnings: list[JsonObject] = []
+    if check_types:
+        try:
+            diagnostics = await typecheck(config, path)
+        except TypecheckError as e:
+            raise ProposalError("typecheck", str(e)) from None
+        errors = [d for d in diagnostics if d.get("severity") == "error"]
+        if errors:
+            raise ProposalError("typecheck", f"pyright: {len(errors)} error(s)", errors)
+        warnings = [d for d in diagnostics if d.get("severity") != "error"]
+
+    try:
+        report = cast(JsonObject, await kernel.start())
+    except KernelError as e:
+        raise ProposalError("load", e.message, [e.to_dict()]) from None
+    draft = cast(JsonObject, report["draft"])
+    load_errors = [
+        error
+        for error in cast(list[JsonObject], draft["errors"])
+        if Path(str(error.get("file"))).resolve() == path
+    ]
+    if load_errors:
+        raise ProposalError("load", f"{module} failed to import", load_errors)
+    return path, f"{config.draft_dir.name}.{module}", warnings
+
+
 def _write(config: Config, module: str, code: str) -> Path:
     if not module.isidentifier() or module.startswith("_"):
         raise ProposalError(
@@ -138,12 +191,74 @@ def _write(config: Config, module: str, code: str) -> Path:
             f"{config.package}.{module} is a stable module; choose another name "
             "or register a new version of its operators",
         )
+    absolute = _draft_imports(code, config.draft_dir.name)
+    if absolute:
+        raise ProposalError(
+            "write",
+            "draft modules import each other relatively; use the `fix` form",
+            absolute,
+        )
     path = config.draft_dir / f"{module}.py"
     path.write_text(code)
     # The bytecode cache is validated by mtime in whole seconds and size: a
     # same-size rewrite within a second would otherwise load stale code.
     Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
     return path
+
+
+def _draft_imports(code: str, package: str) -> list[JsonObject]:
+    """Absolute imports of the draft ``package``, with the relative form.
+
+    Code that does not parse is left to the typecheck and load stages.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+
+    def inner(name: str | None) -> str | None:
+        """``name`` inside ``package`` ("" for the package), else ``None``."""
+        if name == package:
+            return ""
+        if name is not None and name.startswith(f"{package}."):
+            return name.removeprefix(f"{package}.")
+        return None
+
+    found: list[JsonObject] = []
+    for node in ast.walk(tree):
+        fixes: list[str | None] = []
+        line = 0
+        if isinstance(node, ast.ImportFrom) and node.level == 0:
+            line = node.lineno
+            rest = inner(node.module)
+            if rest is not None:
+                relative = ast.ImportFrom(
+                    module=rest or None, names=node.names, level=1
+                )
+                fixes.append(ast.unparse(relative))
+        elif isinstance(node, ast.Import):
+            line = node.lineno
+            for alias in node.names:
+                rest = inner(alias.name)
+                if rest is None:
+                    continue
+                parent, _, leaf = rest.rpartition(".")
+                relative = ast.ImportFrom(
+                    module=parent or None,
+                    names=[ast.alias(leaf, alias.asname)],
+                    level=1,
+                )
+                fixes.append(ast.unparse(relative) if leaf else None)
+        for fix in fixes:
+            found.append(
+                {
+                    "line": line,
+                    "message": f"absolute import of the draft package {package!r}",
+                    "fix": fix,
+                }
+            )
+    found.sort(key=lambda d: cast(int, d["line"]))
+    return found
 
 
 async def _check_examples(

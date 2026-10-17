@@ -49,7 +49,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    (`progress` / `total` = its `done` / `total`, `message` e.g.
    "inpaint 120/900"). The SDK sends nothing without a progress token.
    The final state of every node goes into the run trace; the other nodes
-   are shown by the dashboard (item 8). Needs apriori3d/ico#24 (`run`
+   are shown by the dashboard (item 9). Needs apriori3d/ico#24 (`run`
    tools, initial snapshots on activation).
 6. [x] `propose_operator`: stages write → typecheck (pyright, file only,
    on by default) → load → register → examples, structured stage reports.
@@ -59,10 +59,35 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    - `progress` and `stream` nodes in a seq give "signature could not be
      inferred" warnings that name internal methods (`_identity_fn`,
      `_stream_fn`): infer the identity signature of `IcoProgress` from its
-     neighbours and use node labels in messages (fix in `../ico`, branch
-     `fix/transparent-identity-links`: untyped identity nodes are skipped
-     by link checks).
-8. [ ] Browser dashboard (first; MCP progress notifications were not shown
+     neighbours and use node labels in messages (fix in `../ico`: untyped identity nodes
+     are skipped by link checks, apriori3d/ico#25).
+8. [x] Domain types. Types are plain Python classes used in operator
+    signatures; today a type is known only if a registered signature uses
+    it, and a module without operators is rejected. Add:
+    - `propose_types(module, code)`: a types-only module in the draft
+      package, stages write → typecheck → load (no register/examples);
+      it must define at least one public class. Operator modules import
+      types from it. Types move to the stable package with the operators
+      that use them on `crystallize`.
+    - `list_types` / `get_type(name)`: types of the domain packages
+      (draft and stable) with module, status, docstring and fields
+      (dataclass / Pydantic fields with their types), whether or not a
+      signature uses them yet. Short names resolve as for search; an
+      ambiguous name lists candidates.
+    - Server `instructions`: look for an existing type before creating
+      one; types are immutable dataclasses or Pydantic models with a
+      docstring; large data at the pipeline boundary is passed by
+      reference (e.g. a path in an `ImageRef`), in-memory data inside the
+      pipeline is fine.
+    - Import rule, so that crystallization never rewrites imports:
+      draft → draft imports are relative (`from .frames import Frame`),
+      draft → stable imports are absolute (`from domain.frames import
+      Frame`). `propose_types` and `propose_operator` reject absolute
+      imports of the draft package (stage `write`, with the relative form
+      as the fix). State the rule in the server `instructions`.
+    No shared standard type library yet: the vocabulary grows from real
+    domains through crystallization.
+9. [ ] Browser dashboard (first; MCP progress notifications were not shown
    by the desktop app, neither in the Code tab nor in a chat). One HTML + JS
    page served by a small HTTP server in the server process, bound to
    `127.0.0.1` only, one-time token in the URL. The server keeps the live
@@ -74,14 +99,18 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    through a small adapter (`getStatus`) so the page can later be hosted as
    an MCP App. In the desktop app it can open in the built-in browser pane.
    The pipeline graph (`describe` JSON backend) is not part of this item.
-9. [ ] Asynchronous runs: `run(wait=false)` returns a `run_id`;
+10. [ ] Asynchronous runs: `run(wait=false)` returns a `run_id`;
    `run_status(run_id)` returns the same compact snapshot the dashboard
    uses; `cancel_run(run_id)`. Runs live in the kernel; the server tracks
    them.
-10. [ ] `crystallize`: branch, move drafts to stable, tests from examples,
-   gate (pyright strict, tests, validate pipelines), commit, push,
+11. [ ] `crystallize`: branch, move drafts to stable, tests from examples,
+   gate (pyright strict, tests, validate pipelines, and no import of the
+    draft package from the stable package); moved modules are never
+    rewritten: the closure of their relative imports moves with them, and
+    remaining drafts that import a moved module get that import rewritten
+    to the absolute stable form, commit, push,
    `gh pr create` with cards, gate report and trace stats.
-11. [ ] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
+12. [ ] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
    the desktop app; README with the workflow; how to
     specialize a clone (rename `domain` / `domain_draft`, set `ico.toml`).
 

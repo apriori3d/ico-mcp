@@ -109,6 +109,52 @@ This needs a small core change: `load_operators(path, status=...)` override
 resolves a short name over all types used in registered signatures; an
 ambiguous name is an error listing the candidates as `module:qualname`.
 
+## Domain types
+
+A data type is a plain Python class used in operator signatures:
+dataclasses, Pydantic models, or library types (`np.ndarray`,
+`PIL.Image.Image`, `pandas.DataFrame`, builtins). There is no separate type
+system and no standard type library yet; the vocabulary grows from real
+domains through crystallization, and common types may be lifted into a
+shared package later.
+
+Shared vocabulary is what keeps operators composable, so the agent must
+find and reuse types before creating new ones:
+
+- `propose_types(module, code)` adds a types-only module to the draft
+  package (stages write → typecheck → load). Operator modules import
+  their types from it.
+- `list_types` / `get_type(name)` show the domain's types with module,
+  status, docstring and fields, including types no signature uses yet.
+- Types move to the stable package with the operators that use them on
+  `crystallize`.
+
+**Imports.** `module` in `propose_types` / `propose_operator` is a module
+name inside the draft package; the agent never chooses the package. To keep
+crystallization a plain move of files, draft → draft imports are relative
+(`from .frames import Frame`) and draft → stable imports are absolute
+(`from domain.frames import Frame`). Absolute imports of the draft package
+are rejected at the `write` stage. The stable package never imports the
+draft package; the `crystallize` gate checks this, so reviewed code never
+depends on unreviewed code. Moved modules keep their relative imports
+because an operator and the types it uses move together.
+
+Two edge cases of a partial crystallization:
+
+- A moved module relatively imports a draft module that was not selected:
+  `crystallize` adds such modules automatically (the closure of relative
+  imports) and lists them in the PR.
+- A draft module that stays relatively imports a module that moves: its
+  import is rewritten to the absolute stable form (`from .frames import`
+  → `from domain.frames import`). Only remaining drafts are rewritten;
+  moved, reviewed code is never touched. The kernel reload after the move
+  checks that the drafts still load.
+
+Guidelines in the server `instructions`: types are immutable dataclasses
+or Pydantic models with a docstring; large data crosses the pipeline
+boundary by reference (e.g. `ImageRef` with a path), while data inside a
+pipeline can stay in memory (e.g. a `Frame` with a pixel array).
+
 ## Tools (MVP)
 
 | Tool | Params | Returns |
@@ -116,6 +162,8 @@ ambiguous name is an error listing the candidates as `module:qualname`.
 | `search_operators` | `text?`, `input_type?`, `output_type?`, `tags?`, `limit?` | operator cards |
 | `get_operator` | `ref` | card + source code (for editing only) |
 | `propose_operator` | `module`, `code`, `typecheck?=true`, `examples?` | cards or a staged error report |
+| `propose_types` | `module`, `code`, `typecheck?=true` | type cards or a staged error report |
+| `list_types` / `get_type` | `name?` | type cards (module, status, docstring, fields) |
 | `validate` | `spec` | issues with spec paths |
 | `run` | `spec`, `input?`, `max_items?` | `RunResult.to_dict()`; writes a trace |
 | `save_pipeline` | `name`, `spec`, `description` | saved path (must validate) |
@@ -164,7 +212,7 @@ Prepares a human review as a GitHub pull request:
    `<pkg>_draft` to `<pkg>`; save the given pipelines; write tests from the
    examples.
 4. Gate on the whole stable package: pyright strict, the generated tests,
-   and `validate` of every saved pipeline.
+   `validate` of every saved pipeline, and no import of the draft package.
 5. Commit, push, `gh pr create`. The PR body contains: operator cards, the
    gate report, and trace statistics per operator (runs, successes, last
    run) from `runs/`.

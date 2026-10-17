@@ -2,8 +2,9 @@
 
 An agent refers to a type by short name (``Report``), by ``module:qualname``
 (``domain.text:Report``) or by the formatted type as cards show it in
-``sig`` (``list[Report]``). Only types that occur in the input or output of
-a registered signature, including generic arguments, are known.
+``sig`` (``list[Report]``). Known types are given to the index: the inputs
+and outputs of registered signatures, including generic arguments, and the
+domain types.
 """
 
 from __future__ import annotations
@@ -11,20 +12,24 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, get_args, get_origin
 
-from ico import IcoSignature
 from ico.core.signature_utils import format_ico_type  # pyright: ignore[reportMissingTypeStubs]  # ico.core is a namespace package
 
 from ico_mcp.protocol import JsonValue, KernelError
 
 
 class TypeIndex:
-    """Type names of a set of signatures."""
+    """Names of a set of types.
 
-    def __init__(self, signatures: Iterable[IcoSignature]) -> None:
+    Args:
+        types: The known types; generic arguments are known too.
+        unknown: Why a name is unknown, for the error message.
+    """
+
+    def __init__(self, types: Iterable[Any], unknown: str) -> None:
         self._types: dict[str, list[Any]] = {}
-        for signature in signatures:
-            self._add(signature.i)
-            self._add(signature.o)
+        self._unknown = unknown
+        for tp in types:
+            self._add(tp)
 
     def resolve(self, name: str) -> Any:
         """The type called ``name``.
@@ -37,12 +42,12 @@ class TypeIndex:
         if not candidates:
             raise KernelError(
                 "type_error",
-                f"unknown type {name!r}: it occurs in no registered signature",
+                f"unknown type {name!r}: {self._unknown}",
                 {"name": name},
             )
         if len(candidates) > 1:
             labels: list[JsonValue] = []
-            labels.extend(sorted(_label(tp) for tp in candidates))
+            labels.extend(sorted(label(tp) for tp in candidates))
             raise KernelError(
                 "type_error",
                 f"ambiguous type {name!r}; use one of the candidates",
@@ -53,7 +58,7 @@ class TypeIndex:
     def _add(self, tp: Any) -> None:
         names = {format_ico_type(tp).replace(" ", "")}
         if get_origin(tp) is None and isinstance(tp, type):
-            names.add(_label(tp))
+            names.add(label(tp))
         for name in names:
             known = self._types.setdefault(name, [])
             if not any(t == tp for t in known):
@@ -62,7 +67,7 @@ class TypeIndex:
             self._add(arg)
 
 
-def _label(tp: Any) -> str:
+def label(tp: Any) -> str:
     if get_origin(tp) is None and isinstance(tp, type):
         return f"{tp.__module__}:{tp.__qualname__}"
     return repr(tp)

@@ -34,8 +34,10 @@ async def propose(client: Client, **arguments: Any) -> dict[str, Any]:
     return cast(dict[str, Any], result.structured_content)
 
 
-async def rejected(client: Client, **arguments: Any) -> dict[str, Any]:
-    result = await client.call_tool("propose_operator", arguments)
+async def rejected(
+    client: Client, tool_name: str = "propose_operator", **arguments: Any
+) -> dict[str, Any]:
+    result = await client.call_tool(tool_name, arguments)
     assert result.is_error
     message = text(result)
     error = cast(dict[str, Any], json.loads(message[message.index("{") :]))
@@ -43,8 +45,8 @@ async def rejected(client: Client, **arguments: Any) -> dict[str, Any]:
     return error
 
 
-async def tool(client: Client, name: str, **arguments: Any) -> dict[str, Any]:
-    result = await client.call_tool(name, arguments)
+async def tool(client: Client, tool_name: str, **arguments: Any) -> dict[str, Any]:
+    result = await client.call_tool(tool_name, arguments)
     assert not result.is_error, text(result)
     return cast(dict[str, Any], result.structured_content)
 
@@ -191,3 +193,87 @@ async def test_examples_must_belong_to_the_module(config: Config) -> None:
 
     assert error["stage"] == "examples"
     assert error["diagnostics"] == [{"ref": "shout@1"}]
+
+
+# ─── Types ───
+
+FRAMES = '''from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Frame:
+    """A video frame on disk."""
+
+    path: str
+    index: int
+'''
+
+FRAME_OPS = '''from ico.registry import register
+
+from .frames import Frame
+
+
+@register("first_frame", 1)
+def first_frame(path: str) -> Frame:
+    """The first frame of a video."""
+    return Frame(path, 0)
+'''
+
+
+async def test_proposed_types_are_used_by_a_draft_operator(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        accepted = await tool(client, "propose_types", module="frames", code=FRAMES)
+        operator = await propose(client, module="video", code=FRAME_OPS)
+        listed = await tool(client, "list_types")
+        frame = await tool(client, "get_type", name="Frame")
+        found = await tool(client, "search_operators", output_type="Frame")
+
+    assert accepted["module"] == "domain_draft.frames"
+    assert accepted["path"] == "domain_draft/frames.py"
+    assert [t["name"] for t in accepted["types"]] == ["Frame"]
+    assert accepted["types"][0]["fields"] == [
+        {"name": "path", "type": "str"},
+        {"name": "index", "type": "int"},
+    ]
+    assert operator["cards"][0]["sig"] == "str → Frame"
+    assert "domain_draft.frames:Frame" in [t["type"] for t in listed["types"]]
+    assert (frame["status"], frame["doc"]) == ("draft", "A video frame on disk.")
+    assert [c["name"] for c in found["cards"]] == ["first_frame"]
+
+
+async def test_types_module_needs_a_class_and_no_operators(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        empty = await rejected(
+            client, "propose_types", module="frames", code="LIMIT = 3\n"
+        )
+        mixed = await rejected(
+            client, "propose_types", module="slug", code=SLUGIFY + FRAMES
+        )
+
+    assert empty["stage"] == "types"
+    assert "no public class" in empty["message"]
+    assert mixed["stage"] == "types"
+    assert mixed["diagnostics"] == [{"ref": "slugify@1"}]
+
+
+async def test_write_rejects_absolute_draft_imports(config: Config) -> None:
+    code = (
+        "import os\n"
+        "from domain_draft.frames import Frame, Video as V\n"
+        "from domain_draft import frames\n"
+        "import domain_draft.frames as f, domain_draft.a.b\n"
+        "from domain.text import Report\n"
+    )
+    async with Client(create_server(config)) as client:
+        operator = await rejected(client, module="video", code=code)
+        types = await rejected(client, "propose_types", module="video", code=code)
+
+    assert operator["stage"] == types["stage"] == "write"
+    assert [(d["line"], d["fix"]) for d in operator["diagnostics"]] == [
+        (2, "from .frames import Frame, Video as V"),
+        (3, "from . import frames"),
+        (4, "from . import frames as f"),
+        (4, "from .a import b"),
+    ]
+    assert types["diagnostics"] == operator["diagnostics"]
+    assert not (config.draft_dir / "video.py").exists()

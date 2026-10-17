@@ -27,6 +27,7 @@ from ico_mcp.config import Config, ConfigError, load_config
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
 from ico_mcp.proposals import Example, ProposalError, propose
+from ico_mcp.proposals import propose_types as stage_types
 from ico_mcp.protocol import JsonObject, KernelError
 
 INSTRUCTIONS = """\
@@ -45,8 +46,15 @@ Build and run data pipelines from a registry of typed operators.
    Keep operators small, typed and parametric; configuration goes into
    constructor params, not into closures; heavy models load lazily. Give
    examples for operators with JSON inputs and outputs.
-4. Pass data by reference (paths or URIs), never as bytes.
-5. When a pipeline works and is likely to be reused, save_pipeline, then
+4. Reuse domain types (list_types, get_type) before creating one with
+   propose_types, in a types-only module. Types are immutable dataclasses
+   or Pydantic models with a docstring. Large data crosses the pipeline
+   boundary by reference (e.g. an ImageRef with a path); inside a pipeline
+   it may stay in memory. Draft modules import each other relatively
+   (from .frames import Frame) and stable modules absolutely
+   (from <package>.frames import Frame).
+5. Pass data by reference (paths or URIs), never as bytes.
+6. When a pipeline works and is likely to be reused, save_pipeline, then
    suggest crystallizing it to the human.
 """
 
@@ -140,6 +148,36 @@ def create_server(config: Config) -> MCPServer[None]:
                 )
             except ProposalError as e:
                 raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
+
+    @server.tool(annotations=WRITES)
+    async def propose_types(
+        module: str, code: str, typecheck: bool = True
+    ) -> dict[str, JsonValue]:
+        """Add or replace a draft module of domain types, then reload.
+
+        Stages: write `<draft package>/<module>.py`, typecheck (pyright),
+        load, types (at least one public class, no operators). Operator
+        modules import the types relatively: `from .<module> import Name`.
+        """
+        async with proposing:
+            try:
+                return await stage_types(
+                    config, kernel, module=module, code=code, check_types=typecheck
+                )
+            except ProposalError as e:
+                raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
+
+    @server.tool(annotations=READ_ONLY)
+    async def list_types() -> dict[str, JsonValue]:
+        """Domain types (stable and draft) as compact cards, used by a
+        signature or not."""
+        return await call("types", {})
+
+    @server.tool(annotations=READ_ONLY)
+    async def get_type(name: str) -> dict[str, JsonValue]:
+        """A domain type with its module, docstring and fields; `name` as
+        in search (`Frame` or `module:qualname`)."""
+        return await call("type", {"name": name})
 
     @server.tool(annotations=READ_ONLY)
     async def validate(spec: dict[str, JsonValue]) -> dict[str, JsonValue]:
