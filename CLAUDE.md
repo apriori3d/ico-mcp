@@ -112,9 +112,11 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
    `gh pr create` with cards, gate report and trace stats. Done in a
     temporary git worktree; drafts stay until the merge, then `reload` (and
     server start) retires identical ones and reports differing ones.
-12. [ ] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
+12. [x] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
    the desktop app; README with the workflow; how to
     specialize a clone (rename `domain` / `domain_draft`, set `ico.toml`).
+    Plus `docs/agent-guide.md` (spec reference, errors, writing operators,
+    runs, domain notes), served by the `guide` tool.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

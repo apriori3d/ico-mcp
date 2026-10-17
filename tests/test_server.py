@@ -36,6 +36,7 @@ TOOLS = {
     "run_status",
     "cancel_run",
     "crystallize",
+    "guide",
 }
 
 
@@ -91,6 +92,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "get_type",
         "dashboard",
         "run_status",
+        "guide",
     }
 
 
@@ -442,3 +444,30 @@ async def test_shutdown_kills_active_runs(config: Config, tmp_path: Path) -> Non
         await wait_for(pid_file.exists)
 
     assert await wait_dead(int(pid_file.read_text()))
+
+
+# ─── Guide ───
+
+
+async def test_guide_is_the_repository_guide(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        missing = await client.call_tool("guide", {})
+        (config.root / "docs").mkdir()
+        (config.root / "docs" / "agent-guide.md").write_text("# Domain guide\n")
+        found = await client.call_tool("guide", {})
+
+    assert missing.is_error and "agent-guide.md is missing" in text(missing)
+    assert text(found) == "# Domain guide\n"
+
+
+def test_guide_covers_every_spec_kind() -> None:
+    from ico.spec.builders import _BUILDERS  # pyright: ignore[reportPrivateUsage]  # the kinds ICO can build
+
+    guide = (default_root() / "docs" / "agent-guide.md").read_text()
+    missing = [kind for kind in ["op", *_BUILDERS] if f"| `{kind}` |" not in guide]
+    assert missing == []
+
+
+def test_readme_lists_every_tool() -> None:
+    readme = (default_root() / "README.md").read_text()
+    assert [tool for tool in sorted(TOOLS) if f"`{tool}`" not in readme] == []

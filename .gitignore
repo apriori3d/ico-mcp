@@ -21,3 +21,6 @@ runs/
 # Agent drafts (crystallize moves them into the stable package)
 domain_draft/*
 !domain_draft/__init__.py
+
+# Machine-specific MCP client config (see README)
+.mcp.json

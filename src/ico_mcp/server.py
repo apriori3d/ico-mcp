@@ -35,7 +35,9 @@ from ico_mcp.proposals import propose_types as stage_types
 from ico_mcp.protocol import JsonObject, KernelError
 
 INSTRUCTIONS = """\
-Build and run data pipelines from a registry of typed operators.
+Build and run data pipelines from a registry of typed operators. The guide
+tool returns the full reference (spec kinds and params, errors, writing
+operators and types, runs); call it whenever these notes are not enough.
 
 1. Look for a saved pipeline first (list_pipelines, get_pipeline).
 2. Otherwise compose one from existing operators: search_operators step by
@@ -71,6 +73,9 @@ Build and run data pipelines from a registry of typed operators.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
+
+GUIDE = "docs/agent-guide.md"
+"""The agent guide, relative to the repository root (a clone extends it)."""
 
 
 class OperatorExample(BaseModel):
@@ -253,6 +258,16 @@ def create_server(config: Config) -> MCPServer[None]:
             job = jobs.cancel(run_id)
         await job.finished.wait()
         return job.status()
+
+    @server.tool(annotations=READ_ONLY)
+    async def guide() -> str:
+        """The guide for agents: workflow, every spec kind with its params,
+        error formats, how to write operators and types, runs, and notes
+        about this domain. Markdown."""
+        path = config.root / GUIDE
+        if not path.is_file():
+            raise ToolError(f"{GUIDE} is missing in this repository")
+        return path.read_text(encoding="utf-8")
 
     @server.tool(annotations=READ_ONLY)
     async def dashboard() -> dict[str, JsonValue]:
