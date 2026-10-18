@@ -360,6 +360,8 @@ class VideoRef:
   for its parameters without a default: they only validate it (saved as
   `check_params`, also used by the crystallize gate), never as run
   values.
+- `delete_pipeline(name)` removes a saved pipeline that is no longer
+  useful (e.g. an experiment), so `list_pipelines` stays short.
 - `crystallize(refs, title, summary, pipelines)` opens a pull request that
   makes the drafts stable. It pushes a branch: **ask the human first**.
   After they merge and pull, call `reload`.

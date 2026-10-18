@@ -113,6 +113,7 @@ class OperatorExample(BaseModel):
 
 
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+DELETES = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
 
 def create_server(
@@ -441,6 +442,16 @@ def create_server(
             "params": declared,
             "check_params": pipelines.check_params(doc),
         }
+
+    @server.tool(annotations=DELETES)
+    async def delete_pipeline(name: str) -> dict[str, JsonValue]:
+        """Delete a saved pipeline (its file in the pipelines directory).
+
+        A pipeline already in a crystallization branch stays in that branch.
+        """
+        with tool_errors():
+            path = pipelines.delete(config.pipelines_dir, name)
+        return {"name": name, "path": str(path.relative_to(config.root))}
 
     @server.tool(annotations=WRITES)
     async def crystallize(

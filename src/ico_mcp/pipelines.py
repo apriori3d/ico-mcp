@@ -86,6 +86,24 @@ def load(directory: Path, name: str) -> JsonObject:
     return cast(JsonObject, json.loads(path.read_text()))
 
 
+def delete(directory: Path, name: str) -> Path:
+    """Remove a saved pipeline.
+
+    Raises:
+        KernelError: ``not_found`` (with the saved names) if there is no such
+            pipeline.
+    """
+    path = _path(directory, name)
+    if not path.is_file():
+        raise KernelError(
+            "not_found",
+            f"pipeline {name!r} not found",
+            {"name": name, "saved": list[JsonValue](names(directory))},
+        )
+    path.unlink()
+    return path
+
+
 def names(directory: Path) -> list[str]:
     """Names of the saved pipelines, sorted."""
     return sorted(p.name[: -len(SUFFIX)] for p in directory.glob(f"*{SUFFIX}"))

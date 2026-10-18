@@ -38,6 +38,7 @@ TOOLS = {
     "crystallize",
     "guide",
     "server_status",
+    "delete_pipeline",
 }
 
 
@@ -479,3 +480,23 @@ def test_guide_covers_every_spec_kind() -> None:
 def test_readme_lists_every_tool() -> None:
     readme = (default_root() / "README.md").read_text()
     assert [tool for tool in sorted(TOOLS) if f"`{tool}`" not in readme] == []
+
+
+async def test_delete_pipeline(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        await call(
+            client, "save_pipeline", name="old", spec=op("shout@1"), description=""
+        )
+        await call(
+            client, "save_pipeline", name="kept", spec=op("shout@1"), description=""
+        )
+        deleted = await call(client, "delete_pipeline", name="old")
+        listed = await call(client, "list_pipelines")
+        missing = await call_error(client, "delete_pipeline", name="old")
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+
+    assert deleted == {"name": "old", "path": "pipelines/old.spec.json"}
+    assert [p["name"] for p in listed["pipelines"]] == ["kept"]
+    assert (missing["code"], missing["saved"]) == ("not_found", ["kept"])
+    annotations = tools["delete_pipeline"].annotations
+    assert annotations is not None and annotations.destructive_hint is True
