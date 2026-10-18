@@ -399,8 +399,9 @@ class VideoRef:
   app): a call that exceeds it makes the client restart the server, and
   the run is lost.
   `cancel_run(run_id)` stops a run between items and returns its status
-  with the outputs produced so far (`result`, with `cancelled`); a run
-  stuck in one long item is killed after 10 s, without a result.
+  with the outputs produced so far (`result`, with `cancelled`). A long
+  item in a worker stops between its own inner items (frames of a video);
+  an operator stuck in one call is killed after 10 s, without a result.
 - What flows between operators: `sample_run(run_id, node, count=3)`
   returns short previews (`type`, `preview`) of the next `count` (up to
   20) results of `node` in a running run. `node` is a plan key (`0.1.2`,
