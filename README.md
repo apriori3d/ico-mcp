@@ -108,7 +108,7 @@ was installed from.
 | `list_types` / `get_type` | domain types with fields and docstrings |
 | `validate` | type-check a spec; issues carry their location in the spec |
 | `run` | run a spec on a JSON input; `wait=false` returns a run id at once |
-| `run_status` / `cancel_run` | follow or stop a run |
+| `run_status` / `wait_run` / `cancel_run` | follow, wait for or stop a run |
 | `dashboard` | the URL of the dashboard |
 | `guide` | the reference for agents (`docs/agent-guide.md`) |
 | `propose_operator` / `propose_types` | add or replace a draft module, in checked stages |

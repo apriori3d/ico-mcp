@@ -158,6 +158,9 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     uses (asked from the main kernel; everything when it cannot tell), so
     unrelated heavy frameworks stay out of it. Needs apriori3d/ico#39
     (`load_operators(..., modules=...)`).
+21. [x] `wait_run(run_id, timeout)`: waits on the server until a run ends
+    or the timeout (1 to 600 s) passes, and returns its status; reports
+    MCP progress while waiting. Replaces `run_status` polling loops.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

@@ -64,8 +64,9 @@ operators and types, runs); call it whenever these notes are not enough.
    (from .frames import Frame) and stable modules absolutely
    (from <package>.frames import Frame).
 5. Pass data by reference (paths or URIs), never as bytes. Start a long run
-   with run(wait=false), poll run_status(run_id) and stop it with
-   cancel_run if needed; give the human the dashboard URL (in run results,
+   with run(wait=false), then call wait_run(run_id, timeout) until it is
+   no longer running (no sleep loops), and stop it with cancel_run if
+   needed; give the human the dashboard URL (in run results,
    or the dashboard tool): it shows the progress of every node and the
    pipeline plan.
 6. When a pipeline works and is likely to be reused, save_pipeline, then
@@ -121,6 +122,9 @@ class OperatorExample(BaseModel):
 
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 DELETES = ToolAnnotations(read_only_hint=False, destructive_hint=True)
+
+WAIT_MIN, WAIT_MAX = 1.0, 600.0
+"""Bounds of a wait_run timeout: clients have their own tool-call timeouts."""
 
 
 def create_server(
@@ -359,6 +363,44 @@ def create_server(
         run also has its `result` or its `kernel_error`."""
         with tool_errors():
             return jobs.get(run_id).status()
+
+    @server.tool(annotations=READ_ONLY)
+    async def wait_run(
+        ctx: Context, run_id: str, timeout: float = 60
+    ) -> dict[str, JsonValue]:
+        """Wait until a run ends, or `timeout` seconds (1 to 600) pass; then
+        return its status, as run_status does. Still `running` after the
+        timeout: call wait_run again (no sleep loops needed). With a progress
+        token, the first progress node is reported while waiting."""
+        if not WAIT_MIN <= timeout <= WAIT_MAX:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": f"timeout must be {WAIT_MIN:g} to {WAIT_MAX:g} s",
+                    }
+                )
+            )
+        with tool_errors():
+            job = jobs.get(run_id)
+        reporter = ProgressReporter()
+
+        async def on_progress(snapshot: JsonObject) -> None:
+            status = reporter.update(snapshot)
+            if status is not None:
+                # A no-op unless the client sent a progress token.
+                await ctx.report_progress(status.progress, status.total, status.message)
+
+        # The board keeps nodes in flow order: start from the first one.
+        for node in job.board.view()["progress"][:1]:
+            await on_progress(cast(JsonObject, dict(node)))
+        job.listeners.append(on_progress)
+        try:
+            with anyio.move_on_after(timeout):
+                await job.finished.wait()
+        finally:
+            job.listeners.remove(on_progress)
+        return job.status()
 
     @server.tool(annotations=WRITES)
     async def cancel_run(run_id: str) -> dict[str, JsonValue]:

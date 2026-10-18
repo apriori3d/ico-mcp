@@ -46,6 +46,9 @@ class Job:
         self.error: JsonObject | None = None
         self.cancelled = False
         self.finished = anyio.Event()
+        self.listeners: list[OnProgress] = []
+        """Receive the run's progress snapshots (``run(wait=true)``,
+        ``wait_run``); added and removed while the run goes."""
 
     @property
     def id(self) -> str:
@@ -124,7 +127,9 @@ class Jobs:
             params["max_items"] = max_items
         if values is not None:
             params["params"] = values
-        self._tasks.start_soon(self._run, job, params, on_progress, pipeline)
+        if on_progress is not None:
+            job.listeners.append(on_progress)
+        self._tasks.start_soon(self._run, job, params, pipeline)
         return job
 
     def get(self, run_id: str) -> Job:
@@ -154,7 +159,6 @@ class Jobs:
         self,
         job: Job,
         params: JsonObject,
-        on_progress: OnProgress | None,
         pipeline: str | None,
     ) -> None:
         started, clock = datetime.now(UTC), time.monotonic()
@@ -168,8 +172,8 @@ class Jobs:
                 job.board.plan = cast(PlanView, plan)
             elif message.get("method") == "progress" and isinstance(snapshot, dict):
                 job.board.progress(cast(ProgressSnapshot, snapshot))
-                if on_progress is not None:
-                    await on_progress(snapshot)
+                for listener in list(job.listeners):
+                    await listener(snapshot)
 
         drafts: JsonValue = None
         job.kernel.modules = await self._modules(cast(JsonObject, params["spec"]))
