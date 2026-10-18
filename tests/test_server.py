@@ -37,6 +37,7 @@ TOOLS = {
     "cancel_run",
     "crystallize",
     "guide",
+    "server_status",
 }
 
 
@@ -78,7 +79,9 @@ async def test_tools_and_instructions(config: Config) -> None:
         instructions = client.instructions
 
     assert {tool.name for tool in tools} == TOOLS
-    assert instructions == INSTRUCTIONS
+    assert instructions is not None
+    assert instructions.startswith("ico-mcp 0.1.0 (")
+    assert instructions.endswith(INSTRUCTIONS)
     read_only = {
         t.name for t in tools if t.annotations and t.annotations.read_only_hint
     }
@@ -93,6 +96,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "dashboard",
         "run_status",
         "guide",
+        "server_status",
     }
 
 

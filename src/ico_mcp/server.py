@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated, cast
@@ -33,6 +33,7 @@ from ico_mcp.progress import ProgressReporter
 from ico_mcp.proposals import Example, ProposalError, propose
 from ico_mcp.proposals import propose_types as stage_types
 from ico_mcp.protocol import JsonObject, KernelError
+from ico_mcp.version import DEFAULT_PACKAGES, ServerStatus
 
 INSTRUCTIONS = """\
 Build and run data pipelines from a registry of typed operators. The guide
@@ -71,6 +72,9 @@ operators and types, runs); call it whenever these notes are not enough.
    suggest crystallizing it to the human: crystallize opens a pull request
    that makes its draft operators stable; after the merge, the human pulls
    and you call reload.
+7. If a tool named here or in the guide is missing from your tool list,
+   call server_status: a server process older than its code is reported
+   as stale, and the human has to reconnect the server.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -111,8 +115,15 @@ class OperatorExample(BaseModel):
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 
 
-def create_server(config: Config) -> MCPServer[None]:
-    """The ico-mcp server for a repository."""
+def create_server(
+    config: Config, *, code: Sequence[Path] = DEFAULT_PACKAGES
+) -> MCPServer[None]:
+    """The ico-mcp server for a repository.
+
+    ``code`` are the packages whose fingerprint tells whether the code on
+    disk is newer than the running process (``server_status``).
+    """
+    status = ServerStatus(config.root, code)
     kernel = KernelClient(config)
     proposing = anyio.Lock()
     runs = BoardRuns()
@@ -130,7 +141,14 @@ def create_server(config: Config) -> MCPServer[None]:
             board.stop()
             await kernel.aclose()
 
-    server = MCPServer[None](config.name, instructions=INSTRUCTIONS, lifespan=lifespan)
+    server = MCPServer[None](
+        config.name,
+        instructions=f"{status.header}\n\n{INSTRUCTIONS}",
+        lifespan=lifespan,
+    )
+
+    async def server_report() -> JsonObject:
+        return status.report([tool.name for tool in await server.list_tools()])
 
     async def check(doc: JsonObject) -> JsonObject:
         """Validate a pipeline document with its ``check_params``."""
@@ -462,12 +480,28 @@ def create_server(config: Config) -> MCPServer[None]:
         Returns the load report of the stable and the draft package, and
         `drafts`: retired drafts, drafts whose imports were rewritten to the
         stable package, and conflicts (a draft that differs from its stable
-        module).
+        module). `server` is the `server_status` report: the kernel loads
+        new operator code, but a `stale` server needs a reconnect.
         """
         retired = drafts.retire(config)
         with tool_errors():
             report = await kernel.start()
-        return {**cast(JsonObject, report), "drafts": retired}
+        return {
+            **cast(JsonObject, report),
+            "drafts": retired,
+            "server": await server_report(),
+        }
+
+    @server.tool(annotations=READ_ONLY)
+    async def server_status() -> dict[str, JsonValue]:
+        """The code this server process runs and the code on disk.
+
+        `stale` is true when the server's code changed on disk since the
+        process started (e.g. after a git pull): its tools are old until the
+        human reconnects (restarts) the MCP server. `tools` lists the tools
+        of this process.
+        """
+        return await server_report()
 
     return server
 

@@ -85,6 +85,11 @@ Consequences:
   (`load` stage: `ModuleNotFoundError`) is not yours to install: tell the
   human which package to add to the server's `pyproject.toml`; after
   `uv sync` call `reload`.
+- After the server's code changed (a pull, an update), `reload` loads the
+  new operators, but the server process keeps its old tools. `reload`
+  and `server_status` report it as `stale`: ask the human to reconnect
+  (restart) the MCP server. A tool named in this guide but missing from
+  your list means the same.
 - Runs time out after `ico.toml` `timeouts.run` seconds (default 600);
   long runs go with `wait=false`.
 
