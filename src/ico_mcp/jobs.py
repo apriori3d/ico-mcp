@@ -1,9 +1,10 @@
 """Runs started by the server, each in a kernel process of its own.
 
-ICO cannot interrupt a running flow, so a run is cancelled by killing its
-kernel (and the kernel's worker processes). A kernel per run also keeps the
-main kernel free for search, validate and proposals while a run is going,
-and a reload does not cut runs short: they finish on the code they loaded.
+A run is cancelled by SIGTERM to its kernel: ICO stops the run between
+items and returns what it produced; a run that does not stop in time is
+killed with its workers. A kernel per run also keeps the main kernel free
+for search, validate and proposals while a run is going, and a reload does
+not cut runs short: they finish on the code they loaded.
 
 Every run is a run of the dashboard (its ``BoardRun``), so the run id is the
 same on the board and in ``run_status``.
@@ -34,6 +35,8 @@ OnProgress = Callable[[JsonObject], Awaitable[None]]
 """Receives every progress snapshot of a run (e.g. for MCP progress)."""
 
 CANCELLED: JsonObject = {"code": "cancelled", "message": "the run was cancelled"}
+CANCEL_GRACE = 10.0
+"""Seconds a cancelled run has to stop between items before it is killed."""
 TITLE_MAX = 120
 
 
@@ -153,12 +156,27 @@ class Jobs:
         return job
 
     def cancel(self, run_id: str) -> Job:
-        """Kill the kernel of a running run; a finished run is left as is."""
+        """Stop a running run; a finished run is left as is.
+
+        The run's kernel gets SIGTERM: the run stops between items, its
+        workers stop cleanly, and it returns the outputs produced so far
+        (with its trace and profile). A run that has not stopped after
+        ``CANCEL_GRACE`` seconds (an item that runs long) is killed with its
+        workers.
+        """
         job = self.get(run_id)
-        if not job.finished.is_set():
+        if not job.finished.is_set() and not job.cancelled:
             job.cancelled = True
-            job.kernel.kill()
+            job.kernel.terminate()
+            assert self._tasks is not None
+            self._tasks.start_soon(self._kill_after_grace, job)
         return job
+
+    async def _kill_after_grace(self, job: Job) -> None:
+        with anyio.move_on_after(CANCEL_GRACE):
+            await job.finished.wait()
+        if not job.finished.is_set():
+            job.kernel.kill()
 
     async def _run(
         self,
@@ -205,7 +223,12 @@ class Jobs:
                         job.result["profile"] = profiles.summary(profile)
             except KernelError as e:
                 job.error = e.to_dict()
-        if job.cancelled and job.result is None:
+        # Cancelled: the kernel stopped the run between items and returned
+        # what it produced (`cancelled` in the result), or it was killed (no
+        # result). Either way the run did not succeed.
+        if (job.cancelled and job.result is None) or (
+            job.result is not None and "cancelled" in job.result
+        ):
             job.error = CANCELLED
         job.board.finish(
             str(job.error.get("message")) if job.error is not None else None,
@@ -279,6 +302,8 @@ def _summary(result: JsonObject) -> str:
     parts = [f"{total} output(s)", f"{count} item error(s)"]
     if result.get("truncated"):
         parts.append("truncated")
+    if "cancelled" in result:
+        parts.append("cancelled")
     return " · ".join(parts)
 
 

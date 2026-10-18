@@ -85,6 +85,13 @@ def hang(pid_file: str) -> str:
     return pid_file
 
 
+@register("slow", 1)
+def slow(text: str) -> str:
+    """Pass a text on after a pause."""
+    time.sleep(0.05)
+    return text
+
+
 @register("crash", 1)
 def crash(text: str) -> str:
     """Exit the process."""

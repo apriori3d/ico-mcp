@@ -113,6 +113,13 @@ class KernelClient:
         async with self._lock:
             await self._stop()
 
+    def terminate(self) -> None:
+        """Ask the kernel to cancel its run (SIGTERM to the kernel only, not
+        to its workers, which the kernel stops cleanly)."""
+        if self._process is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(self._process.pid, signal.SIGTERM)
+
     def kill(self) -> None:
         """Kill the kernel and its worker processes now, without waiting for
         the lock: a request in progress fails with ``crashed``."""

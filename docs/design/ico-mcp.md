@@ -307,9 +307,12 @@ timeout (about 60 s in the Claude app), and the server's runs die with it
 returns a still running run with `state: running` and `waited`, and
 `wait_run` cuts its `timeout` to `timeouts.wait`.
 
-Each run (also with `wait=true`) has a kernel process of its own. ICO
-cannot interrupt a running flow, so `cancel_run` kills the run's kernel and
-its worker processes; the main kernel stays free for search, validate and
+Each run (also with `wait=true`) has a kernel process of its own.
+`cancel_run` sends SIGTERM to the run's kernel: ICO stops the run between
+items (`ico.spec.run(cancel=...)`), the workers stop cleanly, and the
+result keeps the outputs produced so far, the trace and the profile; a run
+that has not stopped within `CANCEL_GRACE` (10 s) is killed with its
+worker processes. The main kernel stays free for search, validate and
 proposals during a run, and a reload does not cut runs short (they finish
 on the code they loaded). The cost is importing the domain packages once
 per run. Examples of `propose_operator` still run in the main kernel.
