@@ -305,6 +305,7 @@ def create_server(
         params: dict[str, JsonValue] | None = None,
         max_items: int | None = None,
         wait: bool = True,
+        profile: bool = False,
     ) -> dict[str, JsonValue]:
         """Run a spec, or a saved pipeline by name, once on a JSON input;
         returns outputs and per-item errors.
@@ -318,6 +319,12 @@ def create_server(
         `cancel_run`. With a progress token, the first progress node of the
         flow is reported. `dashboard` is the URL of the page with the
         progress of every node.
+
+        `profile=true` measures the time of every node (about 4 µs per call
+        or item): use it when a run is slow. The result's `profile.top` lists
+        the nodes with the largest self time, with `startup` (lazy setup in a
+        first call), `util` (pool utilization) and `transfer` (worker
+        overhead) in `info`; the dashboard shows every node on the plan.
         """
         if (spec is None) == (pipeline is None):
             raise ToolError(
@@ -347,6 +354,7 @@ def create_server(
             on_progress if wait else None,
             pipeline=pipeline,
             values=params,
+            profile=profile,
         )
         if not wait:
             return {"run_id": job.id, "state": "running", "dashboard": board.url}

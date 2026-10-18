@@ -581,3 +581,46 @@ async def test_wait_run_errors(config: Config) -> None:
 
     assert missing["code"] == "not_found"
     assert too_short["code"] == too_long["code"] == "bad_request"
+
+
+async def test_profiled_run_summary_dashboard_and_trace(
+    config: Config, progress_spec_of: Callable[[int], dict[str, Any]]
+) -> None:
+    async with Client(create_server(config)) as client:
+        url = (await call(client, "dashboard"))["url"]
+        plain = await call(client, "run", spec=op("shout@1"), input="x")
+        result = await call(
+            client, "run", spec=progress_spec_of(3), input="a b c", profile=True
+        )
+        cells = board_get(url, f"/api/profile?run={result['run_id']}")
+        plan = board_get(url, f"/api/plan?run={result['run_id']}")
+        started = await call(
+            client,
+            "run",
+            pipeline=None,
+            spec=op("shout@1"),
+            input="y",
+            profile=True,
+            wait=False,
+        )
+        waited = await call(client, "wait_run", run_id=started["run_id"], timeout=30)
+
+    assert "profile" not in plain
+    profile = result["profile"]
+    assert set(profile) == {"elapsed", "overhead", "top"}
+    top = profile["top"]
+    assert 0 < len(top) <= 5
+    assert set(top[0]) == {"key", "label", "self", "share", "count", "p95", "info"}
+    labels = [n["label"] for n in top]
+    assert all(" | " not in label for label in labels)  # no chains
+    assert set(labels) <= {"words@1", "words", "shout@1", "IcoStream"}
+    # The dashboard has the profile, keyed like the plan's rows.
+    assert {k for k in plan["keys"] if k is not None} <= set(cells)
+    assert waited["result"]["profile"]["top"][0]["label"] == "shout@1"
+
+    lines = traces(config)
+    assert lines[0]["profile"] is None
+    profiled = lines[1]["profile"]
+    shout = next(n for n in profiled if n["label"] == "shout@1")
+    assert shout["calls"] == 3 and shout["self"] >= 0
+    assert set(shout) >= {"key", "total", "cpu", "p95", "startup", "utilization"}

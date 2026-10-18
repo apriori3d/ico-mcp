@@ -10,11 +10,14 @@ Notifications (no ``id``), sent while a ``run`` request is in progress::
 
     {"method": "plan", "params": {"request": <id>, "plan": {...}}}
     {"method": "progress", "params": {"request": <id>, "snapshot": {...}}}
+    {"method": "profile", "params": {"request": <id>, "snapshot": {...}}}
 
 ``plan`` is the ``plan_view`` of the built spec (the console plan as rows),
-sent first, unless the spec does not build. ``snapshot`` is a
+sent first, unless the spec does not build. ``progress`` carries a
 ``JsonProgressTool`` snapshot; every progress node is first reported with
-``done = 0``, in flow order.
+``done = 0``, in flow order. ``profile`` (runs with ``profile: true``)
+carries a ``ProfilerTool`` snapshot, keyed like the plan's rows, about once
+a second; the final one is the ``profile`` of the run's result.
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ from ico.core.signature_utils import format_ico_type
 from ico.registry import RegistryEntry, default_registry, load_operators
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
 from ico.spec.run import DEFAULT_MAX_ITEMS
+from ico.tools.profiler import ProfilerTool, ProfileSnapshot
 
 from ico_mcp import environment
 from ico_mcp.config import Config, load_config
@@ -267,6 +271,11 @@ class Kernel:
         values = _values(params)
         self._send_plan(spec, values)
         progress = JsonProgressTool(self._progress(self.request_id))
+        profiler = (
+            ProfilerTool(self._profile(self.request_id))
+            if _optional(params, "profile", bool)
+            else None
+        )
         try:
             result = run(
                 spec,
@@ -274,6 +283,7 @@ class Kernel:
                 max_items=max_items,
                 tools=[progress],
                 params=values,
+                profiler=profiler,
             )
         except SpecError as e:
             raise KernelError("spec_error", str(e), _spec_error(e)) from None
@@ -283,6 +293,8 @@ class Kernel:
             ) from None
         out = cast(JsonObject, result.to_dict())
         out["drafts"] = _draft_fingerprints(_required(params, "spec", dict))
+        if profiler is not None:
+            out["profile"] = cast(JsonObject, dict(profiler.snapshot()))
         return out
 
     def _send_plan(
@@ -296,6 +308,16 @@ class Kernel:
             return
         params: JsonObject = {"request": self.request_id, "plan": plan}
         self.notify({"method": "plan", "params": params})
+
+    def _profile(self, request_id: JsonValue) -> Callable[[ProfileSnapshot], None]:
+        def send(snapshot: ProfileSnapshot) -> None:
+            params: JsonObject = {
+                "request": request_id,
+                "snapshot": cast(JsonObject, dict(snapshot)),
+            }
+            self.notify({"method": "profile", "params": params})
+
+        return send
 
     def _progress(self, request_id: JsonValue) -> Callable[[ProgressSnapshot], None]:
         def send(snapshot: ProgressSnapshot) -> None:

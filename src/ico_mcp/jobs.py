@@ -23,8 +23,9 @@ from anyio.abc import TaskGroup
 from ico import PlanView
 from ico.tools.board import BoardRun, BoardRuns
 from ico.tools.board.runs import ProgressSnapshot
+from ico.tools.profiler import ProfileSnapshot
 
-from ico_mcp import traces
+from ico_mcp import profiles, traces
 from ico_mcp.config import Config
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
@@ -108,11 +109,13 @@ class Jobs:
         *,
         pipeline: str | None = None,
         values: JsonObject | None = None,
+        profile: bool = False,
     ) -> Job:
         """Start a run in a new kernel; it finishes in the background.
 
         ``pipeline`` names a saved pipeline run by name; ``values`` are the
-        values of the pipeline parameters.
+        values of the pipeline parameters; ``profile`` measures every node
+        (the dashboard shows it on the plan, the result has a summary).
         """
         if self._tasks is None:
             raise RuntimeError("Jobs is not entered")
@@ -127,6 +130,8 @@ class Jobs:
             params["max_items"] = max_items
         if values is not None:
             params["params"] = values
+        if profile:
+            params["profile"] = True
         if on_progress is not None:
             job.listeners.append(on_progress)
         self._tasks.start_soon(self._run, job, params, pipeline)
@@ -168,14 +173,18 @@ class Jobs:
             if not isinstance(body, dict):
                 return
             plan, snapshot = body.get("plan"), body.get("snapshot")
-            if message.get("method") == "plan" and isinstance(plan, dict):
+            method = message.get("method")
+            if method == "plan" and isinstance(plan, dict):
                 job.board.plan = cast(PlanView, plan)
-            elif message.get("method") == "progress" and isinstance(snapshot, dict):
+            elif method == "progress" and isinstance(snapshot, dict):
                 job.board.progress(cast(ProgressSnapshot, snapshot))
                 for listener in list(job.listeners):
                     await listener(snapshot)
+            elif method == "profile" and isinstance(snapshot, dict):
+                job.board.profile(cast(ProfileSnapshot, snapshot))
 
         drafts: JsonValue = None
+        profile: ProfileSnapshot | None = None
         job.kernel.modules = await self._modules(cast(JsonObject, params["spec"]))
         async with job.kernel:
             try:
@@ -189,6 +198,11 @@ class Jobs:
                     )
                     # Which draft code the run used: for the trace only.
                     drafts = job.result.pop("drafts", None)
+                    final = job.result.pop("profile", None)
+                    if isinstance(final, dict):
+                        profile = cast(ProfileSnapshot, final)
+                        job.board.profile(profile)
+                        job.result["profile"] = profiles.summary(profile)
             except KernelError as e:
                 job.error = e.to_dict()
         if job.cancelled and job.result is None:
@@ -209,6 +223,7 @@ class Jobs:
             pipeline=pipeline,
             params=cast(JsonObject | None, params.get("params")),
             drafts=cast(JsonObject | None, drafts),
+            profile=profiles.trace(profile) if profile is not None else None,
         )
         job.finished.set()
 

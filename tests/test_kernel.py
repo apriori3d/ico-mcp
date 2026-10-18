@@ -457,3 +457,39 @@ async def wait_dead(pid: int, timeout: float = 5.0) -> bool:
             return True
         await anyio.sleep(0.05)
     return False
+
+
+async def test_run_with_profile_notifies_and_returns_the_profile(
+    config: Config, progress_spec_of: Callable[[int], JsonObject]
+) -> None:
+    notifications: list[JsonObject] = []
+
+    async def collect(message: JsonObject) -> None:
+        notifications.append(message)
+
+    async with KernelClient(config) as kernel:
+        result = cast(
+            dict[str, Any],
+            await kernel.request(
+                "run",
+                {"spec": progress_spec_of(3), "input": "a b c", "profile": True},
+                on_notification=collect,
+            ),
+        )
+        with pytest.raises(KernelError) as bad:
+            await request(
+                kernel, "run", {"spec": op("shout@1"), "input": "x", "profile": "yes"}
+            )
+
+    assert result["outputs"] == ["A", "B", "C"]
+    profile = result["profile"]
+    assert profile["final"] is True
+    nodes = {n["label"]: n for n in profile["nodes"]}
+    assert nodes["shout@1"]["calls"] == 3
+    # Keys of the profile are the keys of the plan's rows.
+    plan = cast(dict[str, Any], notifications[0]["params"])["plan"]
+    keys = {k for k in plan["keys"] if k is not None}
+    assert keys <= {n["key"] for n in profile["nodes"]}
+    profiled = [n for n in notifications if n["method"] == "profile"]
+    assert profiled  # at least the final snapshot
+    assert bad.value.code == "bad_request"
