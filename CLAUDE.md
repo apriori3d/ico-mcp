@@ -167,6 +167,12 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     dashboard (columns on the plan), the result gets the five nodes with
     the largest self time (`profile.top`, formatted as on the dashboard),
     and the trace keeps every node in numbers. Guide: reading a profile.
+23. [x] Tool calls below the client timeout (items 1 and 4 of the second
+    addendum of the first domain session proposal): `timeouts.wait` (45 s)
+    in `ico.toml`; `run(wait=true)` returns a still running run with
+    `state: running` and `waited`, the run goes on in the background;
+    `wait_run` cuts its `timeout` to `timeouts.wait`. Runs that survive a
+    server restart are in Deferred.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

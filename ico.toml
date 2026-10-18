@@ -3,6 +3,6 @@
 name = "domain"
 package = "domain"             # stable package; drafts in domain_draft
 # github = { repo = "owner/domain-mcp", base = "main" }  # needed by crystallize
-timeouts = { run = 600, validate = 30, load = 60 }
+timeouts = { run = 600, validate = 30, load = 60, wait = 45 }
 env = []                       # variables passed to the kernel, e.g. ["HF_HOME"]
 typecheck = "strict"           # pyright mode for drafts

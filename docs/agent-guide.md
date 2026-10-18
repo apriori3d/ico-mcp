@@ -387,12 +387,17 @@ class VideoRef:
   the `run_id` and the `dashboard` URL. The dashboard titles a run by its
   pipeline (or root node) name and its parameter values.
 - First run on the smallest input (one file, a few seconds of video).
-- Long run: `run(..., wait=false)` returns the `run_id` at once; then
-  `wait_run(run_id, timeout)` waits on the server until the run ends or
-  `timeout` seconds (1 to 600) pass, and returns its status (state
+- Long run: `run(..., wait=false)` returns the `run_id` at once; a run
+  with `wait=true` that is still going after `timeouts.wait` (45 s by
+  default) returns `state: running` with `waited` too, and goes on in the
+  background. Then `wait_run(run_id)` waits on the server until the run
+  ends or `timeouts.wait` passes, and returns its status (state
   `running` / `done` / `failed`, progress of every node, `result` or
   `kernel_error` once finished). Still `running`: call it again. No sleep
-  loops; `run_status` is the same snapshot without waiting.
+  loops; `run_status` is the same snapshot without waiting. Tool calls
+  stay below the client's tool-call timeout (about 60 s in the Claude
+  app): a call that exceeds it makes the client restart the server, and
+  the run is lost.
   `cancel_run(run_id)` kills a run.
 - Give the human the dashboard URL; it shows every progress node and the
   plan of active and recent runs.

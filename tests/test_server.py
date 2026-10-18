@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import subprocess
@@ -14,7 +15,7 @@ import pytest
 from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
 
-from ico_mcp.config import Config
+from ico_mcp.config import Config, Timeouts
 from ico_mcp.server import INSTRUCTIONS, create_server, default_root
 
 pytestmark = pytest.mark.anyio
@@ -575,12 +576,35 @@ async def test_wait_run_errors(config: Config) -> None:
         too_short = await call_error(
             client, "wait_run", run_id=done["run_id"], timeout=0
         )
-        too_long = await call_error(
-            client, "wait_run", run_id=done["run_id"], timeout=601
-        )
+        long = await call(client, "wait_run", run_id=done["run_id"], timeout=601)
 
     assert missing["code"] == "not_found"
-    assert too_short["code"] == too_long["code"] == "bad_request"
+    assert too_short["code"] == "bad_request"
+    assert long["state"] == "done" and "waited" not in long  # cut, not an error
+
+
+async def test_calls_wait_at_most_timeouts_wait(config: Config, tmp_path: Path) -> None:
+    config = dataclasses.replace(config, timeouts=Timeouts(wait=1))
+    pid_file = tmp_path / "worker.pid"
+    async with Client(create_server(config)) as client:
+        clock = time.monotonic()
+        started = await call(client, "run", spec=op("hang@1"), input=str(pid_file))
+        run_elapsed = time.monotonic() - clock
+        clock = time.monotonic()
+        still = await call(client, "wait_run", run_id=started["run_id"], timeout=600)
+        wait_elapsed = time.monotonic() - clock
+        quick = await call(client, "run", spec=op("shout@1"), input="x")
+        await call(client, "cancel_run", run_id=started["run_id"])
+
+    # A run longer than timeouts.wait goes on in the background.
+    assert started["state"] == "running" and started["waited"] == 1
+    assert started["run_id"] and started["dashboard"]
+    assert 0.9 <= run_elapsed < 10
+    # wait_run cuts its timeout to timeouts.wait.
+    assert still["state"] == "running" and still["waited"] == 1
+    assert 0.9 <= wait_elapsed < 10
+    # A quick run returns its result as before.
+    assert quick["outputs"] == ["X"] and "waited" not in quick
 
 
 async def test_profiled_run_summary_dashboard_and_trace(

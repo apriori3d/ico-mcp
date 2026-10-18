@@ -64,11 +64,12 @@ operators and types, runs); call it whenever these notes are not enough.
    (from .frames import Frame) and stable modules absolutely
    (from <package>.frames import Frame).
 5. Pass data by reference (paths or URIs), never as bytes. Start a long run
-   with run(wait=false), then call wait_run(run_id, timeout) until it is
-   no longer running (no sleep loops), and stop it with cancel_run if
-   needed; give the human the dashboard URL (in run results,
-   or the dashboard tool): it shows the progress of every node and the
-   pipeline plan.
+   with run(wait=false); a run still going after about 45 s returns
+   state "running" as well. Then call wait_run(run_id) until it is no
+   longer running (no sleep loops; it waits at most about 45 s per call),
+   and stop it with cancel_run if needed; give the human the dashboard URL
+   (in run results, or the dashboard tool): it shows the progress of every
+   node and the pipeline plan.
 6. When a pipeline works and is likely to be reused, save_pipeline, then
    suggest crystallizing it to the human: crystallize opens a pull request
    that makes its draft operators stable; after the merge, the human pulls
@@ -123,7 +124,7 @@ class OperatorExample(BaseModel):
 WRITES = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 DELETES = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
-WAIT_MIN, WAIT_MAX = 1.0, 600.0
+WAIT_MIN = 1.0
 """Bounds of a wait_run timeout: clients have their own tool-call timeouts."""
 
 
@@ -316,8 +317,10 @@ def create_server(
         not quoted. Large data goes by reference: pass paths, get paths
         back. Each run has a kernel process of its own. With `wait=false`
         the call returns the `run_id` at once: poll `run_status`, stop with
-        `cancel_run`. With a progress token, the first progress node of the
-        flow is reported. `dashboard` is the URL of the page with the
+        `cancel_run`. A run longer than `timeouts.wait` (45 s by default)
+        also returns `state: running` (with `waited`) and goes on in the
+        background: call `wait_run(run_id)` until it ends. With a progress
+        token, the first progress node of the flow is reported. `dashboard` is the URL of the page with the
         progress of every node.
 
         `profile=true` measures the time of every node (about 4 µs per call
@@ -358,7 +361,19 @@ def create_server(
         )
         if not wait:
             return {"run_id": job.id, "state": "running", "dashboard": board.url}
-        await job.finished.wait()
+        waited = config.timeouts.wait
+        with anyio.move_on_after(waited):
+            await job.finished.wait()
+        if not job.finished.is_set():
+            # Longer than a tool call may last: the run goes on in the
+            # background, followed with wait_run.
+            job.listeners.remove(on_progress)
+            return {
+                "run_id": job.id,
+                "state": "running",
+                "waited": waited,
+                "dashboard": board.url,
+            }
         if job.error is not None:
             error = {**job.error, "run_id": job.id, "dashboard": board.url}
             raise ToolError(json.dumps(error, ensure_ascii=False))
@@ -374,21 +389,25 @@ def create_server(
 
     @server.tool(annotations=READ_ONLY)
     async def wait_run(
-        ctx: Context, run_id: str, timeout: float = 60
+        ctx: Context, run_id: str, timeout: float | None = None
     ) -> dict[str, JsonValue]:
-        """Wait until a run ends, or `timeout` seconds (1 to 600) pass; then
-        return its status, as run_status does. Still `running` after the
-        timeout: call wait_run again (no sleep loops needed). With a progress
-        token, the first progress node is reported while waiting."""
-        if not WAIT_MIN <= timeout <= WAIT_MAX:
+        """Wait until a run ends, or `timeout` seconds pass; then return its
+        status, as run_status does. `timeout` is at most `timeouts.wait` (45
+        s by default, below the client's tool-call timeout) and defaults to
+        it; a longer one is cut to it. Still `running` (with `waited`): call
+        wait_run again (no sleep loops needed). With a progress token, the
+        first progress node is reported while waiting."""
+        limit = config.timeouts.wait
+        if timeout is not None and timeout < WAIT_MIN:
             raise ToolError(
                 json.dumps(
                     {
                         "code": "bad_request",
-                        "message": f"timeout must be {WAIT_MIN:g} to {WAIT_MAX:g} s",
+                        "message": f"timeout must be at least {WAIT_MIN:g} s",
                     }
                 )
             )
+        waited = min(timeout if timeout is not None else limit, limit)
         with tool_errors():
             job = jobs.get(run_id)
         reporter = ProgressReporter()
@@ -404,11 +423,14 @@ def create_server(
             await on_progress(cast(JsonObject, dict(node)))
         job.listeners.append(on_progress)
         try:
-            with anyio.move_on_after(timeout):
+            with anyio.move_on_after(waited):
                 await job.finished.wait()
         finally:
             job.listeners.remove(on_progress)
-        return job.status()
+        status = job.status()
+        if not job.finished.is_set():
+            status["waited"] = waited
+        return status
 
     @server.tool(annotations=WRITES)
     async def cancel_run(run_id: str) -> dict[str, JsonValue]:
