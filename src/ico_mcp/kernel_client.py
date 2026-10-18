@@ -12,7 +12,7 @@ import os
 import signal
 import sys
 import tempfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from types import TracebackType
 from typing import IO, Self
 
@@ -47,8 +47,14 @@ class KernelClient:
         ...     cards = await kernel.request("search", {"text": "resize"})
     """
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, modules: Sequence[str] | None = None) -> None:
+        """Args:
+        config: The repository configuration.
+        modules: Operator modules to load (``domain_draft.slug``); ``None``
+            loads both packages entirely. Used again on every restart.
+        """
         self.config = config
+        self.modules = modules
         self._lock = anyio.Lock()
         self._process: Process | None = None
         self._stdout: BufferedByteReceiveStream | None = None
@@ -128,7 +134,10 @@ class KernelClient:
         )
         assert self._process.stdout is not None
         self._stdout = BufferedByteReceiveStream(self._process.stdout)
-        return await self._call("load", {})
+        params: JsonObject = {}
+        if self.modules is not None:
+            params["modules"] = list[JsonValue](self.modules)
+        return await self._call("load", params)
 
     async def _call(
         self,

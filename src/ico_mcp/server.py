@@ -136,7 +136,7 @@ def create_server(
     proposing = anyio.Lock()
     runs = BoardRuns()
     board = LiveBoard(runs)
-    jobs = Jobs(config, runs)
+    jobs = Jobs(config, runs, kernel)
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[None]) -> AsyncGenerator[None]:

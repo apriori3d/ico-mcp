@@ -82,6 +82,7 @@ class Kernel:
             "type": self.type_card,
             "module_types": self.module_types,
             "environment": self.environment,
+            "modules": self.modules,
             "validate": self.validate,
             "run": self.run,
         }
@@ -109,9 +110,19 @@ class Kernel:
     # ─── Methods ───
 
     def load(self, params: JsonObject) -> JsonValue:
-        """Load the stable and the draft package."""
-        stable = load_operators(self.config.stable_dir, status="stable")
-        draft = load_operators(self.config.draft_dir, status="draft")
+        """Load the stable and the draft package, or only ``modules``
+        (qualified names, e.g. ``domain_draft.slug``) and what they import."""
+        modules = _strings(params, "modules") if "modules" in params else None
+        stable = load_operators(
+            self.config.stable_dir,
+            status="stable",
+            modules=_in_package(modules, self.config.stable_dir.name),
+        )
+        draft = load_operators(
+            self.config.draft_dir,
+            status="draft",
+            modules=_in_package(modules, self.config.draft_dir.name),
+        )
         packages = {
             self.config.stable_dir.name: "stable",
             self.config.draft_dir.name: "draft",
@@ -202,6 +213,23 @@ class Kernel:
         refs: list[JsonValue] = []
         refs.extend(entry.ref for entry in default_registry if entry.module == module)
         return {"types": cards, "operators": refs}
+
+    def modules(self, params: JsonObject) -> JsonValue:
+        """The modules that register ``refs``; ``unknown`` lists refs that
+        are not registered."""
+        modules: set[str] = set()
+        unknown: list[JsonValue] = []
+        for ref in _strings(params, "refs"):
+            try:
+                module = default_registry.get(ref).module
+            except KeyError:
+                unknown.append(ref)
+                continue
+            if module is not None:
+                modules.add(module)
+        found: list[JsonValue] = []
+        found.extend(sorted(modules))
+        return {"modules": found, "unknown": unknown}
 
     def environment(self, params: JsonObject) -> JsonValue:
         """Python, PATH, allowed variables, packages, duplicates and the
@@ -345,6 +373,14 @@ def _issue(issue: SignatureIssue) -> JsonObject:
         "got": format_ico_type(issue.output) if issue.output is not None else None,
         "refs": [issue.left, issue.right],
     }
+
+
+def _in_package(modules: list[str] | None, package: str) -> list[str] | None:
+    """The module names of ``package`` among qualified ``modules``."""
+    if modules is None:
+        return None
+    prefix = f"{package}."
+    return [m.removeprefix(prefix) for m in modules if m.startswith(prefix)]
 
 
 def _card(entry: RegistryEntry) -> JsonObject:
