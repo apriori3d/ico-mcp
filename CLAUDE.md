@@ -199,6 +199,27 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     the package guide plus `docs/domain.md`. First domain: `ico-mcp-video`
     on the cube machine.
 
+Findings of the first domain (numbers of
+`docs/proposals/2026-10-17-first-domain-session.md`, which now continues in
+the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
+`ico` roadmap (17-21). One PR each:
+
+28. [ ] Small fixes for remote use: a fixed `board = { host, port }` in
+    `ico.toml` (finding 5: the dashboard moves to a new port on every
+    restart, so a LAN proxy breaks); `environment(match=[...])` as a list
+    (finding 6); a JSON-quoted string `input` is decoded or rejected with
+    a hint (finding 3); the profile says "first call" instead of
+    `startup` when it is not setup (finding 8).
+29. [ ] `delete_module(module)` (finding 24): removes a draft module and
+    reports the saved pipelines that use its operators, like `changes`.
+30. [ ] `sample_run`, second iteration (finding 21): the last N results of
+    a node (a ring buffer, so an agent sees items that already passed),
+    and a field-wise preview of dataclasses (scalars in full, arrays as
+    shape and dtype) instead of a repr cut in the middle.
+31. [ ] `pipeline_ref` on the server side (finding 16, with ico item 21):
+    `save_pipeline` records the referenced pipelines; replacing or
+    deleting one reports the pipelines that use it.
+
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
 real need found in actual use.
