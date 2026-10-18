@@ -277,3 +277,104 @@ async def test_write_rejects_absolute_draft_imports(config: Config) -> None:
     ]
     assert types["diagnostics"] == operator["diagnostics"]
     assert not (config.draft_dir / "video.py").exists()
+
+
+# ─── Edits ───
+
+
+async def test_edits_change_a_draft_module(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        await propose(client, module="slug", code=SLUGIFY)
+        card = await tool(client, "get_operator", ref="slugify@1")
+        edited = await propose(
+            client,
+            module="slug",
+            edits=[
+                {"old": '"-".join', "new": '"_".join'},
+                {"old": "Lower-case words", "new": "Lower-case words, underscores"},
+            ],
+        )
+        ran = await tool(
+            client, "run", spec={"kind": "op", "op": "slugify@1"}, input="A B"
+        )
+        stable = await tool(client, "get_operator", ref="count_words@1")
+
+    assert card["module_source"] == SLUGIFY
+    assert edited["edits"] == 2
+    assert ran["outputs"] == ["a_b"]
+    text = (config.draft_dir / "slug.py").read_text()
+    assert '"_".join' in text and "underscores" in text
+    assert "module_source" not in stable
+
+
+async def test_an_edit_can_delete_text(config: Config) -> None:
+    code = SLUGIFY + "\n\nUNUSED = 1\n"
+    async with Client(create_server(config)) as client:
+        await propose(client, module="slug", code=code)
+        await propose(
+            client, module="slug", edits=[{"old": "\n\nUNUSED = 1\n", "new": ""}]
+        )
+
+    assert (config.draft_dir / "slug.py").read_text() == SLUGIFY
+
+
+async def test_failed_edits_change_nothing(config: Config) -> None:
+    doubled = SLUGIFY + '\n# "-".join twice\n'
+    async with Client(create_server(config)) as client:
+        await propose(client, module="slug", code=doubled)
+        missing = await rejected(
+            client,
+            module="slug",
+            edits=[
+                {"old": "Lower-case", "new": "Upper"},
+                {"old": "nowhere", "new": "x"},
+            ],
+        )
+        twice = await rejected(
+            client, module="slug", edits=[{"old": '"-".join', "new": "x"}]
+        )
+        empty = await rejected(client, module="slug", edits=[{"old": "", "new": "x"}])
+
+    assert (missing["stage"], missing["diagnostics"][0]["edit"]) == ("write", 1)
+    assert "not found" in missing["message"]
+    assert twice["diagnostics"][0]["found"] == 2
+    assert "add surrounding lines" in twice["message"]
+    assert "empty old text" in empty["message"]
+    assert (config.draft_dir / "slug.py").read_text() == doubled
+
+
+async def test_edits_need_a_draft_and_exactly_one_source(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        no_draft = await rejected(
+            client, module="nothing", edits=[{"old": "a", "new": "b"}]
+        )
+        both = await rejected(
+            client, module="slug", code=SLUGIFY, edits=[{"old": "a", "new": "b"}]
+        )
+        neither = await rejected(client, module="slug")
+        stable = await rejected(client, module="text", edits=[{"old": "a", "new": "b"}])
+
+    assert "no draft module 'nothing'" in no_draft["message"]
+    assert "exactly one of code and edits" in both["message"]
+    assert "exactly one of code and edits" in neither["message"]
+    assert "stable module" in stable["message"]
+
+
+async def test_edits_of_a_types_module(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        await tool(client, "propose_types", module="frames", code=FRAMES)
+        edited = await tool(
+            client,
+            "propose_types",
+            module="frames",
+            edits=[
+                {"old": "    index: int\n", "new": "    index: int\n    time: float\n"}
+            ],
+        )
+
+    assert edited["edits"] == 1
+    assert [f["name"] for f in edited["types"][0]["fields"]] == [
+        "path",
+        "index",
+        "time",
+    ]

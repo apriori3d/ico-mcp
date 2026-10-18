@@ -152,7 +152,14 @@ class Kernel:
             raise KernelError(
                 "not_found", f"operator {ref!r} is not registered"
             ) from None
-        return {**entry.card(), "module": entry.module, "source": _source(entry)}
+        card: JsonObject = {
+            **entry.card(),
+            "module": entry.module,
+            "source": _source(entry),
+        }
+        if entry.meta.status == "draft" and entry.module is not None:
+            card["module_source"] = _module_source(entry.module)
+        return card
 
     def module_cards(self, params: JsonObject) -> JsonValue:
         """Cards of the operators a module registers, and the refs whose
@@ -316,6 +323,18 @@ def _issue(issue: SignatureIssue) -> JsonObject:
         "got": format_ico_type(issue.output) if issue.output is not None else None,
         "refs": [issue.left, issue.right],
     }
+
+
+def _module_source(module: str) -> str | None:
+    """The text of an imported module's file, for editing a draft."""
+    loaded = sys.modules.get(module)
+    file = getattr(loaded, "__file__", None)
+    if not isinstance(file, str):
+        return None
+    try:
+        return Path(file).read_text()
+    except OSError:
+        return None
 
 
 def _source(entry: RegistryEntry) -> str | None:

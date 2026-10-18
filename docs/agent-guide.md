@@ -304,6 +304,12 @@ Rules:
   `name@2` in a new draft module.
 - Keep `typecheck` on (pyright strict). Untyped third-party libraries
   need `cast` or a narrow wrapper typed by you.
+- **Small fixes as edits.** `code` is for a new module or a rewrite. To
+  change an existing draft, send `edits=[{"old": ..., "new": ...}]`
+  (also for `propose_types`): replacements applied in order, each `old`
+  occurring exactly once in the module (`get_operator` gives a draft's
+  `module_source`); an empty `new` deletes. A failed edit changes
+  nothing and names the edit.
 
 **Examples** (`examples=[{"ref", "input", "output"}]`) are run as the
 spec `{"kind": "op", "op": ref}` on `input`, and must give exactly one

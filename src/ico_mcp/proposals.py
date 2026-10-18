@@ -31,6 +31,14 @@ Stage = Literal["write", "typecheck", "load", "register", "examples", "types"]
 
 
 @dataclass(frozen=True, slots=True)
+class Edit:
+    """Replace the only occurrence of ``old`` in a draft module by ``new``."""
+
+    old: str
+    new: str
+
+
+@dataclass(frozen=True, slots=True)
 class Example:
     """``ref`` applied to ``input`` must return ``output``."""
 
@@ -66,16 +74,20 @@ async def propose(
     kernel: KernelClient,
     *,
     module: str,
-    code: str,
+    code: str | None = None,
+    edits: Sequence[Edit] | None = None,
     check_types: bool = True,
     examples: Sequence[Example] = (),
 ) -> JsonObject:
     """Run all stages; returns the cards of the module on success.
 
+    The module is ``code``, or the current draft with ``edits`` applied.
+
     Raises:
         ProposalError: At the first failing stage.
     """
-    path, name, warnings = await _load(config, kernel, module, code, check_types)
+    text = module_code(config, module, code, edits)
+    path, name, warnings = await _load(config, kernel, module, text, check_types)
     found = cast(
         JsonObject, await _request(kernel, "register", "module_cards", {"module": name})
     )
@@ -100,13 +112,16 @@ async def propose(
     cards_out.extend(cards)
     warnings_out: list[JsonValue] = []
     warnings_out.extend(warnings)
-    return {
+    result: JsonObject = {
         "module": name,
         "path": str(path.relative_to(config.root)),
         "cards": cards_out,
         "warnings": warnings_out,
         "examples": passed,
     }
+    if edits is not None:
+        result["edits"] = len(edits)
+    return result
 
 
 async def propose_types(
@@ -114,15 +129,19 @@ async def propose_types(
     kernel: KernelClient,
     *,
     module: str,
-    code: str,
+    code: str | None = None,
+    edits: Sequence[Edit] | None = None,
     check_types: bool = True,
 ) -> JsonObject:
     """Run all stages of a types-only module; returns its type cards.
 
+    The module is ``code``, or the current draft with ``edits`` applied.
+
     Raises:
         ProposalError: At the first failing stage.
     """
-    path, name, warnings = await _load(config, kernel, module, code, check_types)
+    text = module_code(config, module, code, edits)
+    path, name, warnings = await _load(config, kernel, module, text, check_types)
     found = cast(
         JsonObject, await _request(kernel, "types", "module_types", {"module": name})
     )
@@ -139,12 +158,70 @@ async def propose_types(
         raise ProposalError("types", f"{module} defines no public class")
     warnings_out: list[JsonValue] = []
     warnings_out.extend(warnings)
-    return {
+    result: JsonObject = {
         "module": name,
         "path": str(path.relative_to(config.root)),
         "types": types,
         "warnings": warnings_out,
     }
+    if edits is not None:
+        result["edits"] = len(edits)
+    return result
+
+
+def module_code(
+    config: Config, module: str, code: str | None, edits: Sequence[Edit] | None
+) -> str:
+    """The new text of a draft module: ``code``, or the current draft with
+    ``edits`` applied in order (stage ``write``; nothing is written here).
+
+    Raises:
+        ProposalError: Unless exactly one of ``code`` and ``edits`` is given,
+            the module has no draft to edit, or an edit's ``old`` is empty or
+            does not occur exactly once at the time it is applied.
+    """
+    if (code is None) == (edits is None):
+        raise ProposalError("write", "give exactly one of code and edits")
+    if code is not None:
+        return code
+    assert edits is not None
+    _check_name(config, module)
+    path = config.draft_dir / f"{module}.py"
+    if not path.is_file():
+        raise ProposalError(
+            "write", f"no draft module {module!r} to edit; send its code instead"
+        )
+    text = path.read_text()
+    for index, edit in enumerate(edits):
+        count = text.count(edit.old) if edit.old else 0
+        if not edit.old or count != 1:
+            reason = (
+                "empty old text"
+                if not edit.old
+                else "old text not found"
+                if count == 0
+                else f"old text found {count} times; add surrounding lines to make it unique"
+            )
+            raise ProposalError(
+                "write",
+                f"edit {index}: {reason}; nothing was changed",
+                [{"edit": index, "found": count, "old": edit.old[:200]}],
+            )
+        text = text.replace(edit.old, edit.new, 1)
+    return text
+
+
+def _check_name(config: Config, module: str) -> None:
+    if not module.isidentifier() or module.startswith("_"):
+        raise ProposalError(
+            "write", f"invalid module name {module!r}: use a public Python identifier"
+        )
+    if (config.stable_dir / f"{module}.py").exists():
+        raise ProposalError(
+            "write",
+            f"{config.package}.{module} is a stable module; choose another name "
+            "or register a new version of its operators",
+        )
 
 
 async def _load(
@@ -181,16 +258,7 @@ async def _load(
 
 
 def _write(config: Config, module: str, code: str) -> Path:
-    if not module.isidentifier() or module.startswith("_"):
-        raise ProposalError(
-            "write", f"invalid module name {module!r}: use a public Python identifier"
-        )
-    if (config.stable_dir / f"{module}.py").exists():
-        raise ProposalError(
-            "write",
-            f"{config.package}.{module} is a stable module; choose another name "
-            "or register a new version of its operators",
-        )
+    _check_name(config, module)
     absolute = draft_imports(code, config.draft_dir.name)
     if absolute:
         raise ProposalError(
