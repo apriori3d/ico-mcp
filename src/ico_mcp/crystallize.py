@@ -42,6 +42,9 @@ from ico_mcp.typecheck import TypecheckError, typecheck
 Stage = Literal["check", "git", "gate", "publish"]
 
 EXAMPLES_TEST = "tests/test_domain_examples.py"
+RECENT_RUNS = 3
+"""Successful runs shown per operator in the pull request."""
+RUN_INPUT_MAX = 80
 OUTPUT_TAIL = 4000
 
 
@@ -397,17 +400,29 @@ def _body(
         "| operator | runs | ok | last run |",
         "|---|---|---|---|",
     ]
-    stats = _trace_stats(config.runs_dir)
+    stats, recent = _trace_stats(config.runs_dir)
     for card in cards:
         ref = f"{card['name']}@{card['version']}"
         runs, ok, last = stats.get(ref, (0, 0, "—"))
         lines.append(f"| `{ref}` | {runs} | {ok} | {last} |")
+    lines += ["", "## Recent successful runs", ""]
+    for card in cards:
+        ref = f"{card['name']}@{card['version']}"
+        lines.append(f"`{ref}`:")
+        runs = recent.get(ref, [])
+        if not runs:
+            lines.append("- none recorded")
+        lines.extend(f"- {_run_line(trace)}" for trace in runs)
     return "\n".join(lines) + "\n"
 
 
-def _trace_stats(runs_dir: Path) -> dict[str, tuple[int, int, str]]:
-    """Per ref: runs, successful runs and the last run's timestamp."""
+def _trace_stats(
+    runs_dir: Path,
+) -> tuple[dict[str, tuple[int, int, str]], dict[str, list[JsonObject]]]:
+    """Per ref: runs, successful runs and the last run's timestamp; and the
+    last ``RECENT_RUNS`` successful traces, newest first."""
     stats: dict[str, tuple[int, int, str]] = {}
+    recent: dict[str, list[JsonObject]] = {}
     for path in sorted(runs_dir.glob("*.jsonl")):
         for line in path.read_text().splitlines():
             try:
@@ -419,7 +434,39 @@ def _trace_stats(runs_dir: Path) -> dict[str, tuple[int, int, str]]:
             for ref in cast(list[str], trace.get("refs") or []):
                 runs, good, last = stats.get(ref, (0, 0, ""))
                 stats[ref] = (runs + 1, good + int(ok), max(last, ts))
-    return stats
+                if ok:
+                    recent.setdefault(ref, []).append(trace)
+    for traces in recent.values():
+        traces.sort(key=lambda t: str(t.get("ts", "")), reverse=True)
+        del traces[RECENT_RUNS:]
+    return stats, recent
+
+
+def _run_line(trace: JsonObject) -> str:
+    """``2026-10-18 09:12 · split_scenes · input `/v/02.mp4` · 12 output(s)
+    · 0 item error(s) · 41.2 s``"""
+    parts = [str(trace.get("ts", "")).replace("T", " ")[:16]]
+    pipeline = trace.get("pipeline")
+    if isinstance(pipeline, str):
+        parts.append(pipeline)
+    shown = trace.get("input")
+    text = shown if isinstance(shown, str) else json.dumps(shown, ensure_ascii=False)
+    if len(text) > RUN_INPUT_MAX:
+        text = text[: RUN_INPUT_MAX - 1] + "…"
+    parts.append(f"input `{text}`")
+    params = trace.get("params")
+    if isinstance(params, dict) and params:
+        parts.append(
+            f"params `{json.dumps(params, ensure_ascii=False)[:RUN_INPUT_MAX]}`"
+        )
+    result = trace.get("result")
+    if isinstance(result, dict):
+        parts.append(f"{result.get('total')} output(s)")
+        parts.append(f"{result.get('errors', 0)} item error(s)")
+    duration = trace.get("duration")
+    if isinstance(duration, int | float):
+        parts.append(f"{duration:.1f} s")
+    return " · ".join(parts)
 
 
 def _text(output: bytes) -> str:

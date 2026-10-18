@@ -27,6 +27,13 @@ from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
 from ico_mcp.typecheck import TypecheckError, typecheck
 
+NOT_FOR_EXAMPLES = (
+    "examples are for operators with JSON input and JSON output that need no "
+    "files or environment; an operator on domain data (e.g. returning a "
+    "dataclass, or reading a video) needs no examples: check it with a "
+    "pipeline run instead"
+)
+
 Stage = Literal["write", "typecheck", "load", "register", "examples", "types"]
 
 
@@ -299,7 +306,10 @@ async def _check_examples(
         try:
             result = cast(JsonObject, await kernel.request("run", params))
         except KernelError as e:
-            failures.append({**failure, "error": e.to_dict()})
+            failed: JsonObject = {**failure, "error": e.to_dict()}
+            if "not JSON-compatible" in e.message:
+                failed["hint"] = NOT_FOR_EXAMPLES
+            failures.append(failed)
             continue
         outputs = cast(list[JsonValue], result["outputs"])
         if result["total"] != 1 or outputs[0] != example.output:
@@ -309,11 +319,10 @@ async def _check_examples(
             continue
         passed[example.ref] = passed.get(example.ref, 0) + 1
     if failures:
-        raise ProposalError(
-            "examples",
-            f"{len(failures)} of {len(examples)} example(s) failed",
-            failures,
-        )
+        message = f"{len(failures)} of {len(examples)} example(s) failed"
+        if any("hint" in f for f in failures):
+            message += f"; {NOT_FOR_EXAMPLES}"
+        raise ProposalError("examples", message, failures)
     out: JsonObject = {}
     out.update(passed)
     return out

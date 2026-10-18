@@ -313,11 +313,16 @@ Rules:
 
 **Examples** (`examples=[{"ref", "input", "output"}]`) are run as the
 spec `{"kind": "op", "op": ref}` on `input`, and must give exactly one
-output equal to `output`. So they fit operators with JSON input and JSON
-output and a single result; give them for those. For operators on domain
-types, check them with a small `run` of a spec that starts with a loader
-and ends with a writer instead. Examples become the operator's tests on
-`crystallize`.
+output equal to `output`. They become the operator's tests on
+`crystallize`, so they are for **pure operators**: JSON input, JSON
+output, no files or environment (parsing a manifest, computing cut
+points, formatting a report). Give them for those.
+
+Operators on domain data (reading a video, cutting clips, returning a
+dataclass) need no examples: an example would depend on files that exist
+only on this machine. Check them with a `run` of a pipeline on a small
+real input; the crystallize pull request shows their recent successful
+runs (input, outputs, errors, duration) as the evidence.
 
 ## 5. Types and imports
 
