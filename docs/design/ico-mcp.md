@@ -317,6 +317,14 @@ proposals during a run, and a reload does not cut runs short (they finish
 on the code they loaded). The cost is importing the domain packages once
 per run. Examples of `propose_operator` still run in the main kernel.
 
+`sample_run` asks a running run for previews of a node's next results
+(`IcoRuntime.sample` in ICO). The run's kernel reads stdin on a thread of
+its own: lines without an `id` are one-way messages, handled at once while
+a request runs, and answered with notifications of the run
+(`sample_started` with the resolved plan key, or `sample_error`, then the
+`sample` notifications). The server matches them by a token and waits at
+most `timeouts.wait`. Labels resolve in the kernel, where the flow is.
+
 Later (deferred): the same page as an MCP App (`ui://ico/run`).
 
 ### Server instructions

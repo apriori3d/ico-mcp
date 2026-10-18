@@ -44,6 +44,7 @@ TOOLS = {
     "environment",
     "wait_run",
     "wait_crystallize",
+    "sample_run",
 }
 
 
@@ -106,6 +107,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "environment",
         "wait_run",
         "wait_crystallize",
+        "sample_run",
     }
 
 
@@ -487,6 +489,75 @@ async def test_cancel_returns_the_outputs_so_far(config: Config) -> None:
     [trace] = traces(config)
     assert trace["ok"] is False and trace["error"]["code"] == "cancelled"
     assert trace["result"]["outputs"] == outputs[:10]  # traces keep ten
+
+
+async def start_slow_run(client: Client, spec: dict[str, Any], words: list[str]) -> str:
+    """Start a run of ``spec`` over ``words`` and wait until it is going."""
+    started = await call(client, "run", spec=spec, input=" ".join(words), wait=False)
+    run_id: str = started["run_id"]
+    with anyio.fail_after(20):
+        while True:
+            status = await call(client, "run_status", run_id=run_id)
+            if any(p["done"] >= 2 for p in status["progress"]):
+                return run_id
+            await anyio.sleep(0.05)
+
+
+async def test_sample_run_shows_what_flows_out_of_a_node(config: Config) -> None:
+    words = [f"w{i}" for i in range(200)]
+    async with Client(create_server(config)) as client:
+        run_id = await start_slow_run(client, slow_spec(200), words)
+        by_label = await call(client, "sample_run", run_id=run_id, node="slow@1")
+        by_name = await call(client, "sample_run", run_id=run_id, node="slow", count=1)
+        by_key = await call(
+            client, "sample_run", run_id=run_id, node=by_label["node"], count=2
+        )
+        await call(client, "cancel_run", run_id=run_id)
+
+    assert by_label["label"] == "slow@1" and by_label["complete"] is True
+    assert by_label["state"] == "running"
+    samples = by_label["samples"]
+    assert [s["index"] for s in samples] == [0, 1, 2]
+    assert all(s["type"] == "str" and s["node"] == by_label["node"] for s in samples)
+    first = words.index(samples[0]["preview"].strip("'"))
+    assert [s["preview"] for s in samples] == [
+        repr(w) for w in words[first : first + 3]
+    ]
+    assert by_name["node"] == by_label["node"] and len(by_name["samples"]) == 1
+    assert by_key["label"] == "slow@1" and len(by_key["samples"]) == 2
+
+
+async def test_sample_run_errors(config: Config) -> None:
+    body = {
+        "kind": "seq",
+        "children": [
+            {"kind": "progress", "name": "words", "params": {"total": 200}},
+            op("slow@1"),
+            op("slow@1"),
+        ],
+    }
+    spec = {
+        "kind": "seq",
+        "children": [op("words@1"), {"kind": "stream", "children": [body]}],
+    }
+    async with Client(create_server(config)) as client:
+        run_id = await start_slow_run(client, spec, [f"w{i}" for i in range(200)])
+        ambiguous = await call_error(client, "sample_run", run_id=run_id, node="slow")
+        unknown = await call_error(client, "sample_run", run_id=run_id, node="nope")
+        too_many = await call_error(
+            client, "sample_run", run_id=run_id, node="slow", count=21
+        )
+        await call(client, "cancel_run", run_id=run_id)
+        ended = await call_error(client, "sample_run", run_id=run_id, node="0")
+        missing = await call_error(client, "sample_run", run_id="nope", node="0")
+
+    assert ambiguous["code"] == "not_found"
+    assert [c["label"] for c in ambiguous["candidates"]] == ["slow@1", "slow@1"]
+    assert unknown["code"] == "not_found"
+    assert "words@1" in [n["label"] for n in unknown["nodes"]]
+    assert too_many["code"] == "bad_request"
+    assert ended["code"] == "not_running"
+    assert missing["code"] == "not_found"
 
 
 async def test_cancel_while_the_kernel_starts(config: Config) -> None:

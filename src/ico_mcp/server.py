@@ -67,7 +67,8 @@ operators and types, runs); call it whenever these notes are not enough.
    with run(wait=false); a run still going after about 45 s returns
    state "running" as well. Then call wait_run(run_id) until it is no
    longer running (no sleep loops; it waits at most about 45 s per call),
-   and stop it with cancel_run if needed; give the human the dashboard URL
+   and stop it with cancel_run if needed; sample_run(run_id, node) shows
+   what flows out of a node meanwhile. Give the human the dashboard URL
    (in run results, or the dashboard tool): it shows the progress of every
    node and the pipeline plan.
 6. When a pipeline works and is likely to be reused, save_pipeline, then
@@ -127,6 +128,7 @@ DELETES = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
 WAIT_MIN = 1.0
 """Bounds of a wait_run timeout: clients have their own tool-call timeouts."""
+SAMPLE_MAX = 20  # as the kernel's MAX_SAMPLES
 
 
 def create_server(
@@ -445,6 +447,29 @@ def create_server(
             job = jobs.cancel(run_id)
         await job.finished.wait()
         return job.status()
+
+    @server.tool(annotations=READ_ONLY)
+    async def sample_run(
+        run_id: str, node: str, count: int = 3
+    ) -> dict[str, JsonValue]:
+        """Show what flows out of a node of a running run: the next `count`
+        (1 to 20) results of `node`, a plan key ("0.1.2") or a label
+        ("resize@1", or "resize" when one version is used), as short
+        previews (`type`, `preview`). A stream or source previews as an
+        iterator: sample the operator inside the stream. Waits at most
+        `timeouts.wait`, or until the run ends (`complete` false: fewer
+        came). An unknown or ambiguous label lists the plan's nodes."""
+        if not 1 <= count <= SAMPLE_MAX:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": f"count must be from 1 to {SAMPLE_MAX}",
+                    }
+                )
+            )
+        with tool_errors():
+            return await jobs.sample(run_id, node, count)
 
     @server.tool(annotations=READ_ONLY)
     async def guide() -> str:

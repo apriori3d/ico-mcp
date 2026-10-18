@@ -401,6 +401,16 @@ class VideoRef:
   `cancel_run(run_id)` stops a run between items and returns its status
   with the outputs produced so far (`result`, with `cancelled`); a run
   stuck in one long item is killed after 10 s, without a result.
+- What flows between operators: `sample_run(run_id, node, count=3)`
+  returns short previews (`type`, `preview`) of the next `count` (up to
+  20) results of `node` in a running run. `node` is a plan key (`0.1.2`,
+  the keys of the dashboard plan) or a label (`resize@1`, or `resize`
+  when one version is used); an unknown or ambiguous label lists the
+  plan's nodes. A stream or source previews as an iterator: sample the
+  operator inside the stream. Arrays show as shape and dtype. It waits at
+  most `timeouts.wait`; `complete: false` means fewer results came (a slow
+  node, or the run ended). `not_running`: the run has ended or not started
+  yet.
 - Give the human the dashboard URL; it shows every progress node and the
   plan of active and recent runs.
 

@@ -18,6 +18,18 @@ sent first, unless the spec does not build. ``progress`` carries a
 ``done = 0``, in flow order. ``profile`` (runs with ``profile: true``)
 carries a ``ProfilerTool`` snapshot, keyed like the plan's rows, about once
 a second; the final one is the ``profile`` of the run's result.
+
+One-way messages (no ``id``) are read on a thread of their own, so they are
+handled while a request runs. ``sample`` asks the run in progress for the
+next results of a node (``{"token", "node", "count"}``, ``node`` a plan key
+or a label such as ``slow@1``); its answers are notifications of the run::
+
+    {"method": "sample_started", "params": {"request": <id>, "token": <t>,
+     "node": "0.1.0", "label": "slow@1"}}
+    {"method": "sample_error", "params": {"request": <id>, "token": <t>,
+     "error": {"code": ..., "message": ...}}}
+    {"method": "sample", "params": {"request": <id>, "sample": {"node",
+     "index", "type", "preview"}}}
 """
 
 from __future__ import annotations
@@ -25,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
+import queue
 import re
 import signal
 import sys
@@ -41,12 +54,19 @@ from ico import (
     plan_view,
     validate_signatures,
 )
+from ico.core.plan_keys import plan_nodes
 from ico.core.runtime.cancel import IcoCancelToken
+from ico.core.runtime.node import IcoRuntimeNode
+from ico.core.runtime.runtime import IcoRuntime
+from ico.core.runtime.tool import IcoRuntimeTool
 from ico.core.signature_utils import format_ico_type
+from ico.core.tree_utils import TreePathIndex
 from ico.registry import RegistryEntry, default_registry, load_operators
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
 from ico.spec.run import DEFAULT_MAX_ITEMS
 from ico.tools.profiler import ProfilerTool, ProfileSnapshot
+from ico.tools.profiler.instrument import label
+from ico.tools.sample import JsonSampleTool, SampleSnapshot
 
 from ico_mcp import environment
 from ico_mcp.config import Config, load_config
@@ -55,6 +75,9 @@ from ico_mcp.protocol import JsonObject, JsonValue, KernelError, decode, encode
 from ico_mcp.type_names import TypeIndex
 
 CANCEL_REASON = "cancel_run"
+MAX_SAMPLES = 20
+MAX_CANDIDATES = 30
+_PLAN_KEY = re.compile(r"0(\.\d+)*")
 DEFAULT_SEARCH_LIMIT = 20
 TRACEBACK_LIMIT = 4000
 
@@ -82,6 +105,9 @@ class Kernel:
         self._cancel_requested = False
         """A cancel came while no run was in progress (e.g. while loading):
         the next run is cancelled before it starts."""
+        self._runtime: IcoRuntime | None = None
+        """The runtime of the run in progress, once it exists (for samples)."""
+        self._run_request: JsonValue = None
         self.types = TypeIndex((), "")
         self.domain_types: list[DomainType] = []
         self.domain_index = TypeIndex((), "")
@@ -282,7 +308,10 @@ class Kernel:
             token.cancel(CANCEL_REASON)
         self._cancel = token
         self._send_plan(spec, values)
+        self._run_request = self.request_id
         progress = JsonProgressTool(self._progress(self.request_id))
+        samples = JsonSampleTool(self._sample(self.request_id))
+        handle = _RuntimeHandle(self._set_runtime)
         profiler = (
             ProfilerTool(self._profile(self.request_id))
             if _optional(params, "profile", bool)
@@ -293,7 +322,7 @@ class Kernel:
                 spec,
                 params.get("input"),
                 max_items=max_items,
-                tools=[progress],
+                tools=[progress, samples, handle],
                 params=values,
                 profiler=profiler,
                 cancel=token,
@@ -306,6 +335,7 @@ class Kernel:
             ) from None
         finally:
             self._cancel = None
+            self._runtime = None
         out = cast(JsonObject, result.to_dict())
         out["drafts"] = _draft_fingerprints(_required(params, "spec", dict))
         if profiler is not None:
@@ -320,6 +350,58 @@ class Kernel:
             self._cancel.cancel(CANCEL_REASON)
         else:
             self._cancel_requested = True
+
+    def _set_runtime(self, runtime: IcoRuntime) -> None:
+        self._runtime = runtime
+
+    def control(self, line: str) -> None:
+        """Handle a one-way message (on the stdin thread, while a request
+        may run); its answers are notifications."""
+        message = decode(line)
+        params = message.get("params", {})
+        if message.get("method") != "sample" or not isinstance(params, dict):
+            return
+        token = params.get("token")
+        try:
+            self.sample(params)
+        except KernelError as e:
+            self._notify_run("sample_error", {"token": token, "error": e.to_dict()})
+        except Exception as e:
+            error = KernelError("internal", f"{type(e).__name__}: {e}")
+            self._notify_run("sample_error", {"token": token, "error": error.to_dict()})
+
+    def sample(self, params: JsonObject) -> None:
+        """Ask the run in progress for the next ``count`` results of
+        ``node``: notifies ``sample_started``, then the samples come."""
+        runtime = self._runtime
+        if runtime is None:
+            raise KernelError("not_running", "no run is in progress in this kernel")
+        node = _required(params, "node", str)
+        count = _positive_int(params, "count", 1)
+        if count > MAX_SAMPLES:
+            raise KernelError("bad_request", f"count must be at most {MAX_SAMPLES}")
+        key, name = _resolve_node(runtime, node)
+        # Started first: samples may come as soon as the probe is set.
+        started: JsonObject = {"token": params.get("token"), "node": key, "label": name}
+        self._notify_run("sample_started", started)
+        try:
+            runtime.sample(key, count)
+        except ValueError as e:
+            raise KernelError("not_found", str(e)) from None
+
+    def _notify_run(self, method: str, params: JsonObject) -> None:
+        params = {"request": self._run_request, **params}
+        self.notify({"method": method, "params": params})
+
+    def _sample(self, request_id: JsonValue) -> Callable[[SampleSnapshot], None]:
+        def send(sample: SampleSnapshot) -> None:
+            params: JsonObject = {
+                "request": request_id,
+                "sample": cast(JsonObject, dict(sample)),
+            }
+            self.notify({"method": "sample", "params": params})
+
+        return send
 
     def _send_plan(
         self, spec: PipelineSpec | NodeSpec, values: JsonObject | None
@@ -349,6 +431,45 @@ class Kernel:
             self.notify({"method": "progress", "params": params})
 
         return send
+
+
+class _RuntimeHandle(IcoRuntimeTool):
+    """Gives the runtime of a run to the kernel, for samples."""
+
+    def __init__(self, on_runtime: Callable[[IcoRuntime], None]) -> None:
+        super().__init__()
+        self._on_runtime = on_runtime
+
+    def register_node(self, node: IcoRuntimeNode, path: TreePathIndex) -> None:
+        if isinstance(node, IcoRuntime):
+            self._on_runtime(node)
+
+
+def _resolve_node(runtime: IcoRuntime, node: str) -> tuple[str, str | None]:
+    """The plan key and label of ``node``: a plan key, a label (``slow@1``)
+    or a label without its version (``slow``)."""
+    labels: dict[str, str] = {}
+    for planned in plan_nodes(runtime.plan_root, expand_remote_flows=True):
+        labels.setdefault(planned.key, label(planned.node))
+    if _PLAN_KEY.fullmatch(node):
+        return node, labels.get(node)  # a key below a worker: its runner checks it
+    exact = [k for k, name in labels.items() if name == node]
+    found = exact or [k for k, name in labels.items() if name.split("@")[0] == node]
+    candidates: list[JsonValue] = [
+        cast(JsonValue, {"node": k, "label": labels[k]})
+        for k in (found or list(labels))
+    ][:MAX_CANDIDATES]
+    if not found:
+        raise KernelError(
+            "not_found", f"no node {node!r} in the plan", {"nodes": candidates}
+        )
+    if len(found) > 1:
+        raise KernelError(
+            "not_found",
+            f"{node!r} names {len(found)} nodes; pass a plan key",
+            {"candidates": candidates},
+        )
+    return found[0], labels[found[0]]
 
 
 # ─── Params ───
@@ -553,9 +674,29 @@ def serve(root: Path, stdin: IO[str], stdout: IO[str]) -> None:
     # cancel_run sends SIGTERM to this process (not to its workers): the run
     # stops between items and returns what it produced.
     signal.signal(signal.SIGTERM, lambda signum, frame: kernel.cancel())
-    for line in stdin:
-        if line.strip():
-            write(kernel.handle(line))
+    requests: queue.Queue[str | None] = queue.Queue()
+
+    def read() -> None:
+        # One-way messages are handled here, also while a request runs.
+        for line in stdin:
+            if not line.strip():
+                continue
+            if _has_id(line):
+                requests.put(line)
+            else:
+                kernel.control(line)
+        requests.put(None)
+
+    threading.Thread(target=read, name="stdin", daemon=True).start()
+    while (line := requests.get()) is not None:
+        write(kernel.handle(line))
+
+
+def _has_id(line: str) -> bool:
+    try:
+        return "id" in decode(line)
+    except KernelError:
+        return True  # a bad line: the request loop answers it
 
 
 def main() -> None:

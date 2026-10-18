@@ -12,6 +12,7 @@ same on the board and in ``run_status``.
 
 from __future__ import annotations
 
+import itertools
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -40,6 +41,35 @@ CANCEL_GRACE = 10.0
 TITLE_MAX = 120
 
 
+class SampleWait:
+    """A ``sample_run`` waiting for the samples of one node."""
+
+    def __init__(self, count: int) -> None:
+        self.count = count
+        self.node: str | None = None
+        """The plan key, once the kernel resolved the request."""
+        self.label: str | None = None
+        self.error: JsonObject | None = None
+        self.samples: list[JsonObject] = []
+        self.done = anyio.Event()
+
+    def on_started(self, params: JsonObject) -> None:
+        node, label = params.get("node"), params.get("label")
+        self.node = node if isinstance(node, str) else None
+        self.label = label if isinstance(label, str) else None
+
+    def on_error(self, params: JsonObject) -> None:
+        error = params.get("error")
+        self.error = cast(JsonObject, error) if isinstance(error, dict) else {}
+        self.done.set()
+
+    def on_sample(self, sample: JsonObject) -> None:
+        if sample.get("node") == self.node and len(self.samples) < self.count:
+            self.samples.append(sample)
+            if len(self.samples) == self.count:
+                self.done.set()
+
+
 class Job:
     """One run: its kernel, its dashboard run and, once finished, its outcome."""
 
@@ -53,6 +83,8 @@ class Job:
         self.listeners: list[OnProgress] = []
         """Receive the run's progress snapshots (``run(wait=true)``,
         ``wait_run``); added and removed while the run goes."""
+        self.samples: dict[int, SampleWait] = {}
+        """``sample_run`` calls waiting, by their token."""
 
     @property
     def id(self) -> str:
@@ -83,6 +115,7 @@ class Jobs:
         self.catalog = catalog
         self._jobs: dict[str, Job] = {}
         self._tasks: TaskGroup | None = None
+        self._sample_tokens = itertools.count(1)
 
     async def __aenter__(self) -> Self:
         self._tasks = anyio.create_task_group()
@@ -172,6 +205,38 @@ class Jobs:
             self._tasks.start_soon(self._kill_after_grace, job)
         return job
 
+    async def sample(self, run_id: str, node: str, count: int) -> JsonObject:
+        """The next ``count`` results of ``node`` (a plan key or a label) in
+        a running run, as previews; waits at most ``timeouts.wait``, or
+        until the run ends, and returns the samples that came by then.
+
+        Raises:
+            KernelError: ``not_found`` (run or node), ``not_running`` (the
+                run ended or its kernel is not up yet), ``bad_request``.
+        """
+        job = self.get(run_id)
+        if job.finished.is_set():
+            raise KernelError("not_running", f"run {run_id} has ended")
+        token = next(self._sample_tokens)
+        wait = SampleWait(count)
+        job.samples[token] = wait
+        try:
+            params: JsonObject = {"token": token, "node": node, "count": count}
+            await job.kernel.send("sample", params)
+            with anyio.move_on_after(self.config.timeouts.wait):
+                await wait.done.wait()
+        finally:
+            del job.samples[token]
+        if wait.error is not None:
+            raise KernelError.from_dict(wait.error)
+        return {
+            "node": wait.node,
+            "label": wait.label,
+            "samples": list[JsonValue](wait.samples),
+            "complete": len(wait.samples) == count,
+            "state": job.status()["state"],
+        }
+
     async def _kill_after_grace(self, job: Job) -> None:
         with anyio.move_on_after(CANCEL_GRACE):
             await job.finished.wait()
@@ -200,6 +265,15 @@ class Jobs:
                     await listener(snapshot)
             elif method == "profile" and isinstance(snapshot, dict):
                 job.board.profile(cast(ProfileSnapshot, snapshot))
+            elif method in ("sample_started", "sample_error"):
+                wait = job.samples.get(cast(int, body.get("token")))
+                if wait is not None and method == "sample_started":
+                    wait.on_started(body)
+                elif wait is not None:
+                    wait.on_error(body)
+            elif method == "sample" and isinstance(body.get("sample"), dict):
+                for wait in list(job.samples.values()):
+                    wait.on_sample(cast(JsonObject, body["sample"]))
 
         drafts: JsonValue = None
         profile: ProfileSnapshot | None = None
@@ -249,6 +323,8 @@ class Jobs:
             profile=profiles.trace(profile) if profile is not None else None,
         )
         job.finished.set()
+        for wait in job.samples.values():
+            wait.done.set()
 
     async def _modules(self, spec: JsonObject) -> list[str] | None:
         """The operator modules a spec uses, or ``None`` (load everything)

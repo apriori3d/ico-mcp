@@ -25,6 +25,7 @@ ErrorCode = Literal[
     "internal",  # unexpected error in the kernel
     "timeout",  # the request timed out; the kernel was killed
     "crashed",  # the kernel exited
+    "not_running",  # the run asked for (samples) is not in progress
 ]
 ERROR_CODES: tuple[ErrorCode, ...] = get_args(ErrorCode)
 

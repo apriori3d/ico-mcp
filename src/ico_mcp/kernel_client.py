@@ -56,6 +56,8 @@ class KernelClient:
         self.config = config
         self.modules = modules
         self._lock = anyio.Lock()
+        self._write_lock = anyio.Lock()
+        """Lines to the kernel's stdin: requests and one-way messages."""
         self._process: Process | None = None
         self._stdout: BufferedByteReceiveStream | None = None
         self._stderr: IO[bytes] | None = None
@@ -109,6 +111,19 @@ class KernelClient:
                 await self._spawn()
             return await self._call(method, params or {}, on_notification)
 
+    async def send(self, method: str, params: JsonObject) -> None:
+        """Send a one-way message (no response), also while a request runs;
+        the kernel answers it with notifications of that request.
+
+        Raises:
+            KernelError: ``not_running`` when the kernel is not running.
+        """
+        process = self._process
+        if process is None or process.stdin is None or not self.running:
+            raise KernelError("not_running", "the kernel is not running")
+        async with self._write_lock:
+            await process.stdin.send(encode({"method": method, "params": params}))
+
     async def aclose(self) -> None:
         async with self._lock:
             await self._stop()
@@ -159,9 +174,10 @@ class KernelClient:
         timeout = self._timeout(method)
         try:
             with anyio.fail_after(timeout):
-                await process.stdin.send(
-                    encode({"id": request_id, "method": method, "params": params})
-                )
+                async with self._write_lock:
+                    await process.stdin.send(
+                        encode({"id": request_id, "method": method, "params": params})
+                    )
                 while True:
                     message = decode(await stdout.receive_until(b"\n", MAX_LINE))
                     if "id" in message:
