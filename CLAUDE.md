@@ -183,6 +183,11 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     the run stops between items and returns the outputs so far (with its
     trace and profile) and `kernel_error` "cancelled"; a run that has not
     stopped within `CANCEL_GRACE` (10 s) is killed as before.
+26. [x] Samples (C.2 of the core evolution proposal in `../ico`; needs
+    apriori3d/ico#55): `sample_run(run_id, node, count)` returns previews
+    of the next results of a node of a running run (plan key or label);
+    the run's kernel handles one-way messages on a stdin thread and
+    answers with notifications of the run.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

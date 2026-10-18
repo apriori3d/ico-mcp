@@ -91,7 +91,8 @@ was installed from.
 3. **Run and watch.** `run` returns outputs and the URL of the dashboard
    (the ICO Live Board: progress of every node and the pipeline plan). Long
    runs start with `run(wait=false)` and are followed with `wait_run` or
-   stopped with `cancel_run`. `run(profile=true)` adds the time of every
+   stopped with `cancel_run`; `sample_run` shows what flows out of a node
+   while the run goes. `run(profile=true)` adds the time of every
    node to the plan on the dashboard and the slowest nodes to the result.
 4. **Keep.** `save_pipeline` stores a validated spec in `pipelines/`.
 5. **Crystallize.** With the human's consent, `crystallize` copies the
@@ -110,6 +111,7 @@ was installed from.
 | `validate` | type-check a spec; issues carry their location in the spec |
 | `run` | run a spec on a JSON input; `wait=false` returns a run id at once; `profile=true` measures every node |
 | `run_status` / `wait_run` / `cancel_run` | follow, wait for or stop a run |
+| `sample_run` | previews of what flows out of a node of a running run |
 | `dashboard` | the URL of the dashboard |
 | `guide` | the reference for agents (`docs/agent-guide.md`) |
 | `propose_operator` / `propose_types` | add or replace a draft module, in checked stages |
