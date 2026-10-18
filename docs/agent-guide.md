@@ -311,10 +311,12 @@ Rules:
   stderr, not only its exit code. What the binary supports (codecs) is
   the operator's own check.
 - **Heavy frameworks** (torch, paddle, tensorflow) are imported inside the
-  operator on first call, never at module level: the kernel and every
-  worker import all draft modules, and two frameworks in one process can
-  clash (two OpenMP runtimes crash together). Keep operators that need
-  clashing frameworks in different workers. `environment()` shows the
+  operator on first call, never at module level: two frameworks in one
+  process can clash (two OpenMP runtimes crash together). A run's
+  process imports only the modules of the operators its pipeline uses
+  (and what they import), and workers only their own; so keep operators
+  that need clashing frameworks in different modules, and in different
+  workers. `environment()` shows the
   packages, and `duplicates` lists packages installed by several
   distributions (e.g. three OpenCV builds sharing `cv2`).
 - Keep `typecheck` on (pyright strict). Untyped third-party libraries

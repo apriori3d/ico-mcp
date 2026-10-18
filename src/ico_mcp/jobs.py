@@ -66,9 +66,14 @@ class Jobs:
     """Active and recent runs; use as an async context manager (the server
     lifespan), which kills the kernels of active runs on exit."""
 
-    def __init__(self, config: Config, runs: BoardRuns) -> None:
+    def __init__(
+        self, config: Config, runs: BoardRuns, catalog: KernelClient | None = None
+    ) -> None:
+        """``catalog`` is the main kernel (all operators loaded): it tells
+        which modules a run needs, so the run's kernel loads only those."""
         self.config = config
         self.runs = runs
+        self.catalog = catalog
         self._jobs: dict[str, Job] = {}
         self._tasks: TaskGroup | None = None
 
@@ -167,6 +172,7 @@ class Jobs:
                     await on_progress(snapshot)
 
         drafts: JsonValue = None
+        job.kernel.modules = await self._modules(cast(JsonObject, params["spec"]))
         async with job.kernel:
             try:
                 await job.kernel.start()
@@ -201,6 +207,23 @@ class Jobs:
             drafts=cast(JsonObject | None, drafts),
         )
         job.finished.set()
+
+    async def _modules(self, spec: JsonObject) -> list[str] | None:
+        """The operator modules a spec uses, or ``None`` (load everything)
+        when the catalog cannot tell (an unknown ref, a kernel error)."""
+        if self.catalog is None:
+            return None
+        refs: list[JsonValue] = []
+        refs.extend(traces.op_refs(spec))
+        try:
+            found = cast(
+                JsonObject, await self.catalog.request("modules", {"refs": refs})
+            )
+        except KernelError:
+            return None
+        if found["unknown"]:
+            return None
+        return cast(list[str], found["modules"])
 
     def _forget_evicted(self) -> None:
         """Drop finished runs the dashboard no longer keeps."""

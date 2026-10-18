@@ -154,6 +154,10 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     proposal of a module reports changed / removed operators with the
     saved pipelines using them and re-validates those pipelines (it does
     not fail on them).
+20. [x] A run's kernel loads only the modules of the operators its spec
+    uses (asked from the main kernel; everything when it cannot tell), so
+    unrelated heavy frameworks stay out of it. Needs apriori3d/ico#39
+    (`load_operators(..., modules=...)`).
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
