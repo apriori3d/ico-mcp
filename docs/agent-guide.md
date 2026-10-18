@@ -85,6 +85,11 @@ Consequences:
   (`load` stage: `ModuleNotFoundError`) is not yours to install: tell the
   human which package to add to the server's `pyproject.toml`; after
   `uv sync` call `reload`.
+- After the server's code changed (a pull, an update), `reload` loads the
+  new operators, but the server process keeps its old tools. `reload`
+  and `server_status` report it as `stale`: ask the human to reconnect
+  (restart) the MCP server. A tool named in this guide but missing from
+  your list means the same.
 - Runs time out after `ico.toml` `timeouts.run` seconds (default 600);
   long runs go with `wait=false`.
 
@@ -355,6 +360,8 @@ class VideoRef:
   for its parameters without a default: they only validate it (saved as
   `check_params`, also used by the crystallize gate), never as run
   values.
+- `delete_pipeline(name)` removes a saved pipeline that is no longer
+  useful (e.g. an experiment), so `list_pipelines` stays short.
 - `crystallize(refs, title, summary, pipelines)` opens a pull request that
   makes the drafts stable. It pushes a branch: **ask the human first**.
   After they merge and pull, call `reload`.

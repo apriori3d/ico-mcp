@@ -112,9 +112,10 @@ was installed from.
 | `dashboard` | the URL of the dashboard |
 | `guide` | the reference for agents (`docs/agent-guide.md`) |
 | `propose_operator` / `propose_types` | add or replace a draft module, in checked stages |
-| `save_pipeline` / `list_pipelines` / `get_pipeline` | saved, validated specs |
+| `save_pipeline` / `list_pipelines` / `get_pipeline` / `delete_pipeline` | saved, validated specs |
 | `crystallize` | a pull request that makes drafts stable |
 | `reload` | restart the kernel after a merge or manual edits |
+| `server_status` | the code this server process runs; `stale` when the code on disk is newer (reconnect the server) |
 
 ## Specialize a clone
 

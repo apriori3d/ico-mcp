@@ -125,6 +125,13 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     saved pipelines keep `check_params` for validation (also in the
     crystallize gate); an explicit JSON schema for `input`; run titles
     and traces carry the pipeline name and parameter values.
+14. [x] Server status (item 8 of the first domain session proposal): a
+    `server_status` tool and a `server` block in `reload` compare a
+    fingerprint of the server's code (`ico_mcp`, `ico`) at start with the
+    disk; `stale` tells the agent to ask for a reconnect. The instructions
+    start with the version and commit.
+15. [x] `delete_pipeline(name)` (item 13 of the same proposal): removes a
+    saved pipeline; `not_found` lists the saved ones.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

@@ -37,6 +37,8 @@ TOOLS = {
     "cancel_run",
     "crystallize",
     "guide",
+    "server_status",
+    "delete_pipeline",
 }
 
 
@@ -78,7 +80,9 @@ async def test_tools_and_instructions(config: Config) -> None:
         instructions = client.instructions
 
     assert {tool.name for tool in tools} == TOOLS
-    assert instructions == INSTRUCTIONS
+    assert instructions is not None
+    assert instructions.startswith("ico-mcp 0.1.0 (")
+    assert instructions.endswith(INSTRUCTIONS)
     read_only = {
         t.name for t in tools if t.annotations and t.annotations.read_only_hint
     }
@@ -93,6 +97,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "dashboard",
         "run_status",
         "guide",
+        "server_status",
     }
 
 
@@ -475,3 +480,23 @@ def test_guide_covers_every_spec_kind() -> None:
 def test_readme_lists_every_tool() -> None:
     readme = (default_root() / "README.md").read_text()
     assert [tool for tool in sorted(TOOLS) if f"`{tool}`" not in readme] == []
+
+
+async def test_delete_pipeline(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        await call(
+            client, "save_pipeline", name="old", spec=op("shout@1"), description=""
+        )
+        await call(
+            client, "save_pipeline", name="kept", spec=op("shout@1"), description=""
+        )
+        deleted = await call(client, "delete_pipeline", name="old")
+        listed = await call(client, "list_pipelines")
+        missing = await call_error(client, "delete_pipeline", name="old")
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+
+    assert deleted == {"name": "old", "path": "pipelines/old.spec.json"}
+    assert [p["name"] for p in listed["pipelines"]] == ["kept"]
+    assert (missing["code"], missing["saved"]) == ("not_found", ["kept"])
+    annotations = tools["delete_pipeline"].annotations
+    assert annotations is not None and annotations.destructive_hint is True
