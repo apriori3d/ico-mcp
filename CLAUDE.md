@@ -161,6 +161,12 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
 21. [x] `wait_run(run_id, timeout)`: waits on the server until a run ends
     or the timeout (1 to 600 s) passes, and returns its status; reports
     MCP progress while waiting. Replaces `run_status` polling loops.
+22. [x] Profiling (item 4 of `docs/design/profiler.md` in `../ico`; needs
+    apriori3d/ico#41–#46): `run(profile=true)` attaches ICO's
+    `ProfilerTool`; the kernel streams `profile` notifications to the
+    dashboard (columns on the plan), the result gets the five nodes with
+    the largest self time (`profile.top`, formatted as on the dashboard),
+    and the trace keeps every node in numbers. Guide: reading a profile.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

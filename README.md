@@ -90,8 +90,9 @@ was installed from.
    `domain_draft/` (ignored by git) and load as `draft`.
 3. **Run and watch.** `run` returns outputs and the URL of the dashboard
    (the ICO Live Board: progress of every node and the pipeline plan). Long
-   runs start with `run(wait=false)` and are followed with `run_status` or
-   stopped with `cancel_run`.
+   runs start with `run(wait=false)` and are followed with `wait_run` or
+   stopped with `cancel_run`. `run(profile=true)` adds the time of every
+   node to the plan on the dashboard and the slowest nodes to the result.
 4. **Keep.** `save_pipeline` stores a validated spec in `pipelines/`.
 5. **Crystallize.** With the human's consent, `crystallize` copies the
    drafts into the stable package in a branch of its own (the working tree
@@ -107,7 +108,7 @@ was installed from.
 | `get_operator` | a card with the operator's source |
 | `list_types` / `get_type` | domain types with fields and docstrings |
 | `validate` | type-check a spec; issues carry their location in the spec |
-| `run` | run a spec on a JSON input; `wait=false` returns a run id at once |
+| `run` | run a spec on a JSON input; `wait=false` returns a run id at once; `profile=true` measures every node |
 | `run_status` / `wait_run` / `cancel_run` | follow, wait for or stop a run |
 | `dashboard` | the URL of the dashboard |
 | `guide` | the reference for agents (`docs/agent-guide.md`) |
@@ -159,7 +160,7 @@ src/ico_mcp/
   proposals.py    propose_operator / propose_types stages
   drafts.py       relative imports, closure, retiring crystallized drafts
   crystallize.py  worktree, gate, pull request
-  domain_types.py, type_names.py, pipelines.py, traces.py, progress.py
+  domain_types.py, type_names.py, pipelines.py, traces.py, progress.py, profiles.py
 domain/ domain_draft/ pipelines/ examples/ runs/   the domain (runs/ is ignored)
 ```
 
