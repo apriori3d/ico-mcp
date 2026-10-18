@@ -2,8 +2,7 @@
     "typeCheckingMode": "strict",
     "include": [
         "src",
-        "tests",
-        "domain"
+        "tests"
     ],
     "venvPath": ".",
     "venv": ".venv",

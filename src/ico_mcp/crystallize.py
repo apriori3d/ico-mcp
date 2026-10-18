@@ -378,6 +378,9 @@ def _copy(
         shutil.copy2(
             config.draft_dir / f"{module}.py", target.stable_dir / f"{module}.py"
         )
+        # Drafts committed in the domain repository move: the branch drops
+        # them, and the merge removes them from the working copy.
+        (target.draft_dir / f"{module}.py").unlink(missing_ok=True)
     target.examples_dir.mkdir(exist_ok=True)
     for ref in refs:
         example = config.examples_dir / f"{ref}.json"

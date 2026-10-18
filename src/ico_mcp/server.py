@@ -13,6 +13,7 @@ import json
 import sys
 from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from importlib import resources
 from pathlib import Path
 from typing import Annotated, cast
 
@@ -23,8 +24,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, JsonValue, WithJsonSchema
 
-from ico_mcp import drafts, pipelines
-from ico_mcp.config import Config, ConfigError, load_config
+from ico_mcp import drafts, pipelines, scaffold
+from ico_mcp.config import Config, ConfigError, find_root, load_config
 from ico_mcp.crystallize import Crystallization, Crystallizations
 from ico_mcp.crystallize import crystallize as open_pull_request
 from ico_mcp.jobs import Jobs
@@ -83,7 +84,9 @@ operators and types, runs); call it whenever these notes are not enough.
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
-GUIDE = "docs/agent-guide.md"
+GUIDE = "agent-guide.md"
+"""The guide for agents, shipped with the package; the domain adds
+``docs/domain.md``."""
 """The agent guide, relative to the repository root (a clone extends it)."""
 
 
@@ -160,7 +163,7 @@ def create_server(
 
     server = MCPServer[None](
         config.name,
-        instructions=f"{status.header}\n\n{INSTRUCTIONS}",
+        instructions=instructions(status.header, config),
         lifespan=lifespan,
     )
 
@@ -475,12 +478,9 @@ def create_server(
     @server.tool(annotations=READ_ONLY)
     async def guide() -> str:
         """The guide for agents: workflow, every spec kind with its params,
-        error formats, how to write operators and types, runs, and notes
-        about this domain. Markdown."""
-        path = config.root / GUIDE
-        if not path.is_file():
-            raise ToolError(f"{GUIDE} is missing in this repository")
-        return path.read_text(encoding="utf-8")
+        error formats, how to write operators and types, runs, and the notes
+        of this domain (its pipelines, workflow and conventions). Markdown."""
+        return guide_text(config)
 
     @server.tool(annotations=READ_ONLY)
     async def dashboard() -> dict[str, JsonValue]:
@@ -723,29 +723,78 @@ def tool_errors() -> Generator[None]:
         raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
 
 
+def instructions(header: str, config: Config) -> str:
+    """The server instructions: the generic ones, then what the domain is
+    about (``about`` in ``ico.toml``)."""
+    text = f"{header}\n\n{INSTRUCTIONS}"
+    if config.about:
+        text += (
+            f"\nThis domain ({config.name}): {config.about}\n"
+            "Its pipelines, workflow and conventions: the guide tool, "
+            'section "Domain notes".\n'
+        )
+    return text
+
+
+def guide_text(config: Config) -> str:
+    """The package guide followed by the domain's ``docs/domain.md``."""
+    guide = resources.files("ico_mcp").joinpath(GUIDE).read_text(encoding="utf-8")
+    notes = config.domain_notes
+    if notes.is_file():
+        return f"{guide.rstrip()}\n\n{notes.read_text(encoding='utf-8').strip()}\n"
+    return f"{guide.rstrip()}\n\nThis domain has no notes yet (`docs/domain.md`).\n"
+
+
 # ─── Entry point ───
 
 
-def default_root() -> Path:
-    """The repository that contains this package (``src/ico_mcp``)."""
-    return Path(__file__).resolve().parents[2]
-
-
 def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["init"]:
+        init_main(argv[1:])
+        return
     parser = argparse.ArgumentParser(
-        prog="ico-mcp", description="MCP server over an ICO operator registry."
+        prog="ico-mcp",
+        description="MCP server over the ICO operators of a domain repository "
+        "(`ico-mcp init <dir>` creates one).",
     )
     parser.add_argument(
         "--root",
         type=Path,
         default=None,
-        help="repository root with ico.toml (default: the repository of this package)",
+        help="domain repository with ico.toml (default: the nearest one "
+        "from the current directory up)",
     )
     args = parser.parse_args(argv)
-    root = cast(Path | None, args.root) or default_root()
+    root = cast(Path | None, args.root) or find_root(Path.cwd())
+    if root is None:
+        sys.exit(
+            "ico-mcp: no ico.toml in the current directory or its parents; "
+            "pass --root <domain repository> or create one with "
+            "`ico-mcp init <dir>`"
+        )
     try:
         config = load_config(root)
     except ConfigError as e:
-        hint = "" if args.root else "; pass --root <repository>"
-        sys.exit(f"ico-mcp: {e}{hint}")
+        sys.exit(f"ico-mcp: {e}")
     anyio.run(create_server(config).run_stdio_async)
+
+
+def init_main(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="ico-mcp init", description="Create an empty domain repository."
+    )
+    parser.add_argument("directory", type=Path)
+    parser.add_argument("--name", default=None, help="default: the directory name")
+    parser.add_argument("--package", default="domain", help="stable package name")
+    args = parser.parse_args(argv)
+    try:
+        written = scaffold.init(
+            cast(Path, args.directory),
+            name=cast(str | None, args.name),
+            package=cast(str, args.package),
+        )
+    except ValueError as e:
+        sys.exit(f"ico-mcp init: {e}")
+    for path in written:
+        print(path)

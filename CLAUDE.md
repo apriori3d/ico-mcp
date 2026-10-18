@@ -115,7 +115,7 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
 12. [x] Docs: how to connect the server to Claude Code (`.mcp.json`) and to
    the desktop app; README with the workflow; how to
     specialize a clone (rename `domain` / `domain_draft`, set `ico.toml`).
-    Plus `docs/agent-guide.md` (spec reference, errors, writing operators,
+    Plus the agent guide (now `src/ico_mcp/agent-guide.md`; spec reference, errors, writing operators,
     runs, domain notes), served by the `guide` tool.
 13. [x] Pipeline parameters (items 4, 5 and the titles of item 6 of
     `docs/proposals/2026-10-17-first-domain-session.md`; needs
@@ -188,6 +188,16 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     of the next results of a node of a running run (plan key or label);
     the run's kernel handles one-way messages on a stdin thread and
     answers with notifications of the run.
+27. [x] Server as a package, domain as a repository of its own (replaces
+    the template of item 2): `ico-mcp init <dir> [--package]` creates a
+    domain repository (ico.toml, pyproject depending on ico-mcp and ico,
+    packages, pipelines, examples, the examples test from
+    `ico_mcp.testing`, `docs/domain.md`, `.mcp.json`); drafts are
+    committed there and `crystallize` moves them out of the draft package;
+    the server finds the root by `--root` or the nearest `ico.toml`;
+    `about` in `ico.toml` goes into the instructions and `guide` serves
+    the package guide plus `docs/domain.md`. First domain: `ico-mcp-video`
+    on the cube machine.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

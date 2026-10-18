@@ -15,11 +15,14 @@ Operators are not MCP tools: the tool set is fixed, and the agent sees
 operators as compact cards found by type. Data crosses the JSON boundary by
 reference (paths), and every run has a process of its own. The decisions
 are in [docs/design/ico-mcp.md](docs/design/ico-mcp.md); the reference for
-agents is [docs/agent-guide.md](docs/agent-guide.md).
+agents is [src/ico_mcp/agent-guide.md](src/ico_mcp/agent-guide.md).
 
-**This repository is a template.** A domain server is a clone of it: its
-operators, types, pipelines and dependencies live in the clone, and its
-crystallization pull requests go to the clone's repository.
+**This repository is the server; a domain is a repository of its own.**
+`ico-mcp init <dir>` creates one: its operators, types, pipelines, examples,
+notes for agents and dependencies live there, its crystallization pull
+requests go to its repository, and it depends on the `ico-mcp` package, so
+server fixes reach it by a version bump (or at once, from an editable
+checkout).
 
 ## Setup
 
@@ -48,21 +51,25 @@ the network.
 The server speaks MCP over stdio. Use absolute paths: clients start it from
 their own working directory.
 
+The server runs in the domain's environment (`uv run --project`), so the
+operators' kernels see the domain's dependencies.
+
 **Claude Code**, from any directory:
 
 ```bash
-claude mcp add ico -- uv run --directory /abs/path/to/ico-mcp ico-mcp
+claude mcp add video -- uv run --project /abs/path/to/ico-mcp-video ico-mcp --root /abs/path/to/ico-mcp-video
 ```
 
-or a project-scoped `.mcp.json` in the root of the project you work in
-(it is machine-specific, so this repository ignores its own):
+or the `.mcp.json` that `ico-mcp init` writes in the domain repository (it
+is machine-specific and ignored by git):
 
 ```json
 {
   "mcpServers": {
-    "ico": {
+    "ico-mcp-video": {
       "command": "uv",
-      "args": ["run", "--directory", "/abs/path/to/ico-mcp", "ico-mcp"]
+      "args": ["run", "--project", "/abs/path/to/ico-mcp-video",
+               "ico-mcp", "--root", "/abs/path/to/ico-mcp-video"]
     }
   }
 }
@@ -76,8 +83,8 @@ app does not inherit your shell's `PATH`, so set `"command"` to the
 absolute path of `uv` (`which uv`). The Code tab also reads the project's
 `.mcp.json`.
 
-`ico-mcp --root <dir>` serves another repository than the one the package
-was installed from.
+The server serves the domain repository given by `--root`, else the nearest
+`ico.toml` from its working directory up.
 
 ## Workflow
 
@@ -121,38 +128,46 @@ was installed from.
 | `environment` | Python, PATH, packages (and duplicate builds), binaries of `bin:` caps, as operators see them |
 | `server_status` | the code this server process runs; `stale` when the code on disk is newer (reconnect the server) |
 
-## Specialize a clone
+## Create a domain
 
-1. Clone this repository (or use it as a GitHub template) under the
-   domain's name.
-2. Rename the packages: `domain/` → `<pkg>/` and `domain_draft/` →
-   `<pkg>_draft/` (the draft package is always the stable one plus
-   `_draft`). Update the drafts lines in `.gitignore` to the new name.
-3. Edit `ico.toml`: `name`, `package = "<pkg>"`, and
-   `github = { repo = "owner/<pkg>-mcp", base = "main" }` for
-   crystallization. `env` lists the variables the operators may read
-   (e.g. `HF_HOME`); others never reach them. `timeouts.wait` (45 s) is the
-   longest a tool call waits for a run or a crystallization: keep it below your client's
+```bash
+uv run --directory /abs/path/to/ico-mcp ico-mcp init /abs/path/to/ico-mcp-video --package video
+```
+
+creates, without touching existing files:
+
+```
+ico.toml              name, package, about, github, timeouts, env, typecheck
+pyproject.toml        depends on ico-mcp and ico (editable checkouts when the
+                      server runs from one, else their git repositories)
+video/ video_draft/   stable operators and types; drafts (committed too)
+pipelines/ examples/  saved pipelines; examples of pure operators
+tests/test_domain_examples.py   the examples as tests (crystallize gate)
+docs/domain.md        the domain's part of the guide
+.gitignore .mcp.json
+```
+
+Then:
+
+1. Add the domain's dependencies to `pyproject.toml` (e.g. torch) and run
+   `uv sync`; operators run in this environment.
+2. In `ico.toml`: `about` (a few lines; agents see them in the server
+   instructions), `github = { repo = "owner/ico-mcp-video", base = "main" }`
+   for crystallization, `env` for the variables operators may read (e.g.
+   `HF_HOME`), and `timeouts`. `timeouts.wait` (45 s) is the longest a tool
+   call waits for a run or a crystallization: keep it below your client's
    tool-call timeout (about 60 s in the Claude app), which restarts the
    server and loses its runs.
-4. Edit `pyproject.toml`: the project `name`, and add the domain's
-   dependencies (e.g. torch); operators run with the same environment.
-5. Delete the demo draft `domain_draft/demo.py` and its example.
-6. Write the domain's notes into section 8 of `docs/agent-guide.md`: data
-   locations, formats, conventions, typical pipelines. Agents read it with
-   the `guide` tool.
-7. Keep `tests/test_domain_examples.py`: it runs the examples of every
-   stable operator and is part of the crystallization gate.
+3. Write `docs/domain.md`: the workflow (which pipeline comes after which),
+   how to choose between alternatives, data locations and formats, naming
+   rules, hardware. The `guide` tool serves it after the general guide.
+4. `git init`, commit, and push to the domain's repository.
 
-Server fixes reach a clone through git:
-
-```bash
-git remote add template https://github.com/apriori3d/ico-mcp.git
-```
-
-```bash
-git pull template main
-```
+**Moving a domain out of a clone of this repository:** create the domain
+with `init`, copy `domain_draft/` (into `<package>_draft/` with the
+package renamed in imports), `domain/`, `pipelines/`, `examples/`, the
+`ico.toml` values and the dependencies, commit, then reset the clone to a
+clean `main`.
 
 ## Development
 
@@ -165,8 +180,10 @@ src/ico_mcp/
   proposals.py    propose_operator / propose_types stages
   drafts.py       relative imports, closure, retiring crystallized drafts
   crystallize.py  worktree, gate, pull request
+  scaffold.py     ico-mcp init: an empty domain repository
+  testing.py      the examples of stable operators as tests, for domains
+  agent-guide.md  the guide for agents (the domain adds docs/domain.md)
   domain_types.py, type_names.py, pipelines.py, traces.py, progress.py, profiles.py
-domain/ domain_draft/ pipelines/ examples/ runs/   the domain (runs/ is ignored)
 ```
 
 The server process never imports operator code; only kernels do. Tests use
