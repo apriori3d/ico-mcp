@@ -25,7 +25,7 @@ from pydantic import BaseModel, JsonValue, WithJsonSchema
 
 from ico_mcp import drafts, pipelines
 from ico_mcp.config import Config, ConfigError, load_config
-from ico_mcp.crystallize import CrystallizeError
+from ico_mcp.crystallize import Crystallization, Crystallizations
 from ico_mcp.crystallize import crystallize as open_pull_request
 from ico_mcp.jobs import Jobs
 from ico_mcp.kernel_client import KernelClient
@@ -72,8 +72,9 @@ operators and types, runs); call it whenever these notes are not enough.
    node and the pipeline plan.
 6. When a pipeline works and is likely to be reused, save_pipeline, then
    suggest crystallizing it to the human: crystallize opens a pull request
-   that makes its draft operators stable; after the merge, the human pulls
-   and you call reload.
+   that makes its draft operators stable (still running after about 45 s:
+   call wait_crystallize(crystallize_id) until it ends); after the merge,
+   the human pulls and you call reload.
 7. If a tool named here or in the guide is missing from your tool list,
    call server_status: a server process older than its code is reported
    as stale, and the human has to reconnect the server.
@@ -142,13 +143,14 @@ def create_server(
     runs = BoardRuns()
     board = LiveBoard(runs)
     jobs = Jobs(config, runs, kernel)
+    crystallizations = Crystallizations()
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[None]) -> AsyncGenerator[None]:
         drafts.retire(config)  # before the kernel loads anything
         board.start()
         try:
-            async with jobs:
+            async with jobs, crystallizations:
                 yield
         finally:
             board.stop()
@@ -564,21 +566,62 @@ def create_server(
         given saved `pipelines`, in a branch of its own; the working tree is
         not changed. A gate (load, pyright strict, no draft imports,
         examples, validate pipelines) must pass before anything is pushed.
-        Returns the pull request URL and the gate report. Ask the human
+        Returns the pull request URL and the gate report. A crystallization
+        longer than `timeouts.wait` (45 s by default) returns `state:
+        running` with a `crystallize_id` and its `stage` (check, git, gate,
+        publish) and goes on in the background: call
+        `wait_crystallize(crystallize_id)` until it ends. Ask the human
         first: this pushes a branch and opens a pull request.
         """
-        async with proposing:
-            try:
-                return await open_pull_request(
-                    config,
-                    kernel,
-                    refs=refs,
-                    title=title,
-                    summary=summary,
-                    pipeline_names=pipelines or [],
+        job = crystallizations.start(
+            lambda on_stage: open_pull_request(
+                config,
+                kernel,
+                refs=refs,
+                title=title,
+                summary=summary,
+                pipeline_names=pipelines or [],
+                drafts_lock=proposing,
+                on_stage=on_stage,
+            )
+        )
+        return await crystallize_outcome(job, config.timeouts.wait)
+
+    @server.tool(annotations=READ_ONLY)
+    async def wait_crystallize(
+        crystallize_id: str, timeout: float | None = None
+    ) -> dict[str, JsonValue]:
+        """Wait until a crystallization ends, or `timeout` seconds pass (at
+        most `timeouts.wait`, the default); then return what crystallize
+        returns: the pull request, a failed stage as an error, or `state:
+        running` with its `stage` and `waited` (call again)."""
+        if timeout is not None and timeout < WAIT_MIN:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": f"timeout must be at least {WAIT_MIN:g} s",
+                    }
                 )
-            except CrystallizeError as e:
-                raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
+            )
+        limit = config.timeouts.wait
+        with tool_errors():
+            job = crystallizations.get(crystallize_id)
+        return await crystallize_outcome(
+            job, min(timeout if timeout is not None else limit, limit)
+        )
+
+    async def crystallize_outcome(
+        job: Crystallization, waited: float
+    ) -> dict[str, JsonValue]:
+        with anyio.move_on_after(waited):
+            await job.finished.wait()
+        if job.error is not None:
+            error = {**job.error, "crystallize_id": job.id}
+            raise ToolError(json.dumps(error, ensure_ascii=False))
+        if job.result is None:
+            return job.running(waited)
+        return {**job.result, "crystallize_id": job.id, "state": "done"}
 
     @server.tool(annotations=WRITES)
     async def reload() -> dict[str, JsonValue]:

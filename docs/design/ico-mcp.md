@@ -168,7 +168,8 @@ pipeline can stay in memory (e.g. a `Frame` with a pixel array).
 | `run` | `spec`, `input?`, `max_items?` | `RunResult.to_dict()`; writes a trace |
 | `save_pipeline` | `name`, `spec`, `description` | saved path (must validate) |
 | `list_pipelines` / `get_pipeline` | `name?` | pipelines / spec |
-| `crystallize` | `refs`, `pipelines?`, `title`, `summary` | PR URL |
+| `crystallize` | `refs`, `pipelines?`, `title`, `summary` | PR URL, or `crystallize_id` when still running |
+| `wait_crystallize` | `crystallize_id`, `timeout?` | as `crystallize` |
 | `reload` | — | load report (after a merge or manual edits) |
 
 ### `propose_operator`
@@ -225,6 +226,16 @@ Prepares a human review as a GitHub pull request:
    run) from `runs/`.
 6. Return the PR URL. The human reviews the abstraction (operator
    boundaries, types, params), not every line, and merges; then `reload`.
+
+The gate can take longer than a client's tool-call timeout, so, as for runs,
+no call waits longer than `timeouts.wait`: a crystallization still going
+then returns `state: running`, its `crystallize_id` and `stage`, and goes
+on in the server; `wait_crystallize(crystallize_id)` waits for it (at most
+`timeouts.wait` per call) and returns what `crystallize` would have. The
+drafts lock (shared with proposals) is held only through step 3; the gate
+and the push work on the worktree. Recent outcomes are kept in memory: a
+server restart loses an active crystallization (its worktree is removed
+when the server stops normally), as it loses runs.
 
 Drafts stay in the draft package until the merge, so the agent keeps using
 them while the PR is reviewed. After the human pulls the merge, `reload`

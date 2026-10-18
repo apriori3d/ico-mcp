@@ -114,7 +114,7 @@ was installed from.
 | `guide` | the reference for agents (`docs/agent-guide.md`) |
 | `propose_operator` / `propose_types` | add or replace a draft module, in checked stages |
 | `save_pipeline` / `list_pipelines` / `get_pipeline` / `delete_pipeline` | saved, validated specs |
-| `crystallize` | a pull request that makes drafts stable |
+| `crystallize` / `wait_crystallize` | a pull request that makes drafts stable; a long gate goes on in the background |
 | `reload` | restart the kernel after a merge or manual edits |
 | `environment` | Python, PATH, packages (and duplicate builds), binaries of `bin:` caps, as operators see them |
 | `server_status` | the code this server process runs; `stale` when the code on disk is newer (reconnect the server) |
@@ -130,7 +130,7 @@ was installed from.
    `github = { repo = "owner/<pkg>-mcp", base = "main" }` for
    crystallization. `env` lists the variables the operators may read
    (e.g. `HF_HOME`); others never reach them. `timeouts.wait` (45 s) is the
-   longest a tool call waits for a run: keep it below your client's
+   longest a tool call waits for a run or a crystallization: keep it below your client's
    tool-call timeout (about 60 s in the Claude app), which restarts the
    server and loses its runs.
 4. Edit `pyproject.toml`: the project `name`, and add the domain's
