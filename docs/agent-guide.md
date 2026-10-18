@@ -444,7 +444,13 @@ shows every node on the plan (columns after Flow).
   useful (e.g. an experiment), so `list_pipelines` stays short.
 - `crystallize(refs, title, summary, pipelines)` opens a pull request that
   makes the drafts stable. It pushes a branch: **ask the human first**.
-  After they merge and pull, call `reload`.
+  A crystallization still going after `timeouts.wait` (the gate can take
+  minutes on a large domain) returns `state: running` with a
+  `crystallize_id` and its `stage` (`check`, `git`, `gate`, `publish`)
+  and goes on in the background; call `wait_crystallize(crystallize_id)`
+  until it returns the pull request or a failed stage. Proposals may go on
+  meanwhile: the gate works on a copy. After the human merges and pulls,
+  call `reload`.
 
 ## 8. Domain notes
 

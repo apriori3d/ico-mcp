@@ -17,6 +17,10 @@ working tree (from which the server runs) is never switched or changed:
 
 Drafts stay in the working tree until the pull request is merged and
 pulled; ``reload`` then retires them (:func:`ico_mcp.drafts.retire`).
+
+The gate can take longer than a client's tool-call timeout, so the server
+runs a crystallization in the background (:class:`Crystallizations`) and a
+tool call waits for it at most ``timeouts.wait``.
 """
 
 from __future__ import annotations
@@ -26,12 +30,15 @@ import re
 import shutil
 import sys
 import tempfile
-from collections.abc import Sequence
+import uuid
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal, cast
+from types import TracebackType
+from typing import Literal, Self, cast
 
 import anyio
+from anyio.abc import TaskGroup
 
 from ico_mcp import drafts, pipelines
 from ico_mcp.config import Config, load_config
@@ -42,6 +49,8 @@ from ico_mcp.typecheck import TypecheckError, typecheck
 Stage = Literal["check", "git", "gate", "publish"]
 
 EXAMPLES_TEST = "tests/test_domain_examples.py"
+KEPT = 10
+"""Finished crystallizations kept for ``wait_crystallize``."""
 RECENT_RUNS = 3
 """Successful runs shown per operator in the pull request."""
 RUN_INPUT_MAX = 80
@@ -76,8 +85,14 @@ async def crystallize(
     title: str,
     summary: str,
     pipeline_names: Sequence[str] = (),
+    drafts_lock: anyio.Lock,
+    on_stage: Callable[[Stage], None] = lambda _: None,
 ) -> JsonObject:
     """Open a pull request that makes ``refs`` stable.
+
+    ``drafts_lock`` is held while the drafts are read (check and move), not
+    during the gate and the push, so proposals can go on meanwhile.
+    ``on_stage`` is told each stage as it begins.
 
     Returns:
         ``{"pr_url", "branch", "modules", "added_modules", "gate"}``.
@@ -94,50 +109,70 @@ async def crystallize(
         )
     if not refs:
         raise CrystallizeError("check", "give at least one operator ref")
-    await _check_gh(config)
-    cards = await _draft_cards(kernel, refs)
-    for name in pipeline_names:
-        if not pipelines.exists(config.pipelines_dir, name):
-            raise CrystallizeError("check", f"no saved pipeline {name!r}")
+    locked = True
+    await drafts_lock.acquire()
+    try:
+        on_stage("check")
+        await _check_gh(config)
+        cards = await _draft_cards(kernel, refs)
+        for name in pipeline_names:
+            if not pipelines.exists(config.pipelines_dir, name):
+                raise CrystallizeError("check", f"no saved pipeline {name!r}")
 
-    draft_package = config.draft_dir.name
-    direct = sorted({str(c["module"]).removeprefix(f"{draft_package}.") for c in cards})
-    modules = drafts.closure(config.draft_dir, direct)
-    module_refs = await _module_refs(kernel, draft_package, modules)
-
-    await _git(config.root, "fetch", "origin", github.base)
-    branch = await _free_branch(config.root, f"crystallize/{_slug(title)}")
-    with tempfile.TemporaryDirectory() as tmp:
-        tree = Path(tmp) / "worktree"
-        await _git(
-            config.root,
-            "worktree",
-            "add",
-            "-b",
-            branch,
-            str(tree),
-            f"origin/{github.base}",
+        draft_package = config.draft_dir.name
+        direct = sorted(
+            {str(c["module"]).removeprefix(f"{draft_package}.") for c in cards}
         )
-        pushed = False
-        try:
-            _copy(config, tree, modules, module_refs, pipeline_names)
-            gate = await _gate(load_config(tree))
-            if not all(step["ok"] for step in gate):
-                raise CrystallizeError(
-                    "gate",
-                    "the gate failed; nothing was pushed",
-                    {"gate": cast(list[JsonValue], gate)},
-                )
-            await _git(tree, "add", "-A")
-            await _git(tree, "commit", "-q", "-m", title, "-m", summary)
-            await _git(tree, "push", "-q", "-u", "origin", branch)
-            pushed = True
-            body = _body(config, summary, cards, direct, modules, gate)
-            url = await _pr(config, tree, branch, title, body)
-        finally:
-            await _git(config.root, "worktree", "remove", "--force", str(tree))
-            if not pushed:
-                await _git(config.root, "branch", "-q", "-D", branch, check=False)
+        modules = drafts.closure(config.draft_dir, direct)
+        module_refs = await _module_refs(kernel, draft_package, modules)
+
+        on_stage("git")
+        await _git(config.root, "fetch", "origin", github.base)
+        branch = await _free_branch(config.root, f"crystallize/{_slug(title)}")
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp) / "worktree"
+            await _git(
+                config.root,
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                str(tree),
+                f"origin/{github.base}",
+            )
+            pushed = False
+            try:
+                _copy(config, tree, modules, module_refs, pipeline_names)
+                # The branch exists and the drafts are copied: the rest
+                # works on the worktree only.
+                drafts_lock.release()
+                locked = False
+                on_stage("gate")
+                gate = await _gate(load_config(tree))
+                if not all(step["ok"] for step in gate):
+                    raise CrystallizeError(
+                        "gate",
+                        "the gate failed; nothing was pushed",
+                        {"gate": cast(list[JsonValue], gate)},
+                    )
+                on_stage("publish")
+                await _git(tree, "add", "-A")
+                await _git(tree, "commit", "-q", "-m", title, "-m", summary)
+                await _git(tree, "push", "-q", "-u", "origin", branch)
+                pushed = True
+                body = _body(config, summary, cards, direct, modules, gate)
+                url = await _pr(config, tree, branch, title, body)
+            finally:
+                # Also when the server stops a background crystallization.
+                with anyio.CancelScope(shield=True):
+                    await _git(config.root, "worktree", "remove", "--force", str(tree))
+                    if not pushed:
+                        await _git(
+                            config.root, "branch", "-q", "-D", branch, check=False
+                        )
+    finally:
+        if locked:
+            drafts_lock.release()
     added: list[JsonValue] = []
     added.extend(m for m in modules if m not in direct)
     moved: list[JsonValue] = []
@@ -149,6 +184,101 @@ async def crystallize(
         "added_modules": added,
         "gate": cast(list[JsonValue], gate),
     }
+
+
+# ─── Background ───
+
+
+class Crystallization:
+    """One ``crystallize`` call: its stage and, once finished, its outcome."""
+
+    def __init__(self) -> None:
+        self.id = f"c-{uuid.uuid4().hex[:8]}"
+        self.stage: Stage = "check"
+        self.result: JsonObject | None = None
+        self.error: JsonObject | None = None
+        self.finished = anyio.Event()
+
+    def running(self, waited: float) -> JsonObject:
+        return {
+            "crystallize_id": self.id,
+            "state": "running",
+            "stage": self.stage,
+            "waited": waited,
+        }
+
+
+class Crystallizations:
+    """Crystallizations that go on in the background, so that no tool call
+    waits for one longer than ``timeouts.wait``; use as an async context
+    manager (the server lifespan), which stops active ones on exit."""
+
+    def __init__(self) -> None:
+        self._all: dict[str, Crystallization] = {}
+        self._tasks: TaskGroup | None = None
+
+    async def __aenter__(self) -> Self:
+        self._tasks = anyio.create_task_group()
+        await self._tasks.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        tasks, self._tasks = self._tasks, None
+        if tasks is not None:
+            tasks.cancel_scope.cancel()
+            await tasks.__aexit__(exc_type, exc, tb)
+
+    def start(
+        self, work: Callable[[Callable[[Stage], None]], Awaitable[JsonObject]]
+    ) -> Crystallization:
+        """Start ``work(on_stage)`` (a :func:`crystallize` call)."""
+        if self._tasks is None:
+            raise RuntimeError("Crystallizations is not entered")
+        job = Crystallization()
+        finished = [i for i, c in self._all.items() if c.finished.is_set()]
+        for old in finished[: max(0, len(finished) - KEPT)]:
+            del self._all[old]
+        self._all[job.id] = job
+        self._tasks.start_soon(self._run, job, work)
+        return job
+
+    def get(self, crystallize_id: str) -> Crystallization:
+        """A crystallization by id.
+
+        Raises:
+            KernelError: ``not_found`` for an unknown or forgotten one.
+        """
+        job = self._all.get(crystallize_id)
+        if job is None:
+            raise KernelError(
+                "not_found",
+                f"no crystallization {crystallize_id!r}; only active and recent"
+                " ones are kept",
+                {"crystallize_id": crystallize_id},
+            )
+        return job
+
+    async def _run(
+        self,
+        job: Crystallization,
+        work: Callable[[Callable[[Stage], None]], Awaitable[JsonObject]],
+    ) -> None:
+        def on_stage(stage: Stage) -> None:
+            job.stage = stage
+
+        try:
+            job.result = await work(on_stage)
+        except CrystallizeError as e:
+            job.error = e.to_dict()
+        except Exception as e:  # a bug must not stop the server
+            job.error = CrystallizeError(job.stage, repr(e)).to_dict()
+        finally:
+            job.finished.set()
 
 
 # ─── Check ───

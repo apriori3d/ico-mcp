@@ -1,8 +1,10 @@
+import dataclasses
 import json
 import os
 import shutil
 import subprocess
 import textwrap
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,7 +13,7 @@ from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
 
 from ico_mcp import drafts
-from ico_mcp.config import Config
+from ico_mcp.config import Config, Timeouts
 from ico_mcp.server import create_server
 
 pytestmark = pytest.mark.anyio
@@ -66,10 +68,14 @@ FAKE_GH = """#!/bin/sh
 echo "$@" >> "$GH_LOG"
 if [ "$1" = auth ]; then exit "${GH_AUTH_EXIT:-0}"; fi
 if [ "$1" = pr ]; then
+  if [ -n "$GH_HOLD" ]; then
+    while [ ! -e "$GH_HOLD" ]; do sleep 0.05; done
+  fi
   while [ $# -gt 0 ]; do
     if [ "$1" = --body-file ]; then cp "$2" "$GH_BODY"; fi
     shift
   done
+  if [ -n "$GH_PR_EXIT" ]; then echo "no permission" >&2; exit "$GH_PR_EXIT"; fi
   echo "https://github.com/acme/demo/pull/7"
 fi
 """
@@ -261,6 +267,90 @@ async def test_github_must_be_configured(config: Config) -> None:
 
     assert error["stage"] == "check"
     assert "github" in error["message"]
+
+
+# ─── Background ───
+
+
+async def test_a_long_crystallization_goes_on_in_the_background(
+    repo: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = dataclasses.replace(repo, timeouts=Timeouts(wait=1))
+    release = tmp_path / "release"
+    monkeypatch.setenv("GH_HOLD", str(release))  # gh pr create waits for it
+    async with Client(create_server(config)) as client:
+        await call(client, "propose_operator", module="slug", code=SLUGIFY)
+        clock = time.monotonic()
+        started = await call(
+            client, "crystallize", refs=["slugify@1"], title="Slug", summary="s"
+        )
+        elapsed = time.monotonic() - clock
+        crystallize_id = started["crystallize_id"]
+        still = await call(
+            client, "wait_crystallize", crystallize_id=crystallize_id, timeout=600
+        )
+        # The drafts are free while the gate and the push go on.
+        clock = time.monotonic()
+        await call(client, "propose_operator", module="pad", code=PAD)
+        proposed_in = time.monotonic() - clock
+        release.touch()
+        done = await call(client, "wait_crystallize", crystallize_id=crystallize_id)
+        again = await call(client, "wait_crystallize", crystallize_id=crystallize_id)
+        missing = await call_error(client, "wait_crystallize", crystallize_id="c-0")
+        too_short = await call_error(
+            client, "wait_crystallize", crystallize_id=crystallize_id, timeout=0
+        )
+
+    assert started["state"] == "running" and started["waited"] == 1
+    assert started["stage"] in {"git", "gate", "publish"}
+    assert 0.9 <= elapsed < 10
+    assert still["state"] == "running" and still["waited"] == 1  # cut to 1 s
+    assert proposed_in < 10
+    assert done["state"] == "done" and done["crystallize_id"] == crystallize_id
+    assert done["pr_url"] == "https://github.com/acme/demo/pull/7"
+    assert done["modules"] == ["slug"]
+    assert again == done  # the result stays reachable
+    assert missing["code"] == "not_found"
+    assert too_short["code"] == "bad_request"
+    assert git(repo.root, "worktree", "list").count("\n") == 1
+
+
+async def test_a_background_failure_is_reported_by_wait_crystallize(
+    repo: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = dataclasses.replace(repo, timeouts=Timeouts(wait=1))
+    release = tmp_path / "release"
+    monkeypatch.setenv("GH_HOLD", str(release))
+    monkeypatch.setenv("GH_PR_EXIT", "1")
+    async with Client(create_server(config)) as client:
+        await call(client, "propose_operator", module="slug", code=SLUGIFY)
+        started = await call(
+            client, "crystallize", refs=["slugify@1"], title="Slug", summary="s"
+        )
+        release.touch()
+        failed = await call_error(
+            client, "wait_crystallize", crystallize_id=started["crystallize_id"]
+        )
+
+    assert started["state"] == "running"
+    assert (failed["code"], failed["stage"]) == ("crystallize_failed", "publish")
+    assert failed["crystallize_id"] == started["crystallize_id"]
+    assert "no permission" in failed["output"]
+
+
+async def test_server_exit_stops_a_crystallization_and_removes_its_worktree(
+    repo: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = dataclasses.replace(repo, timeouts=Timeouts(wait=1))
+    monkeypatch.setenv("GH_HOLD", str(tmp_path / "never"))
+    async with Client(create_server(config)) as client:
+        await call(client, "propose_operator", module="slug", code=SLUGIFY)
+        started = await call(
+            client, "crystallize", refs=["slugify@1"], title="Slug", summary="s"
+        )
+
+    assert started["state"] == "running"
+    assert git(repo.root, "worktree", "list").count("\n") == 1
 
 
 # ─── Drafts after the merge ───

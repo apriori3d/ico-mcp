@@ -173,6 +173,11 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     `state: running` and `waited`, the run goes on in the background;
     `wait_run` cuts its `timeout` to `timeouts.wait`. Runs that survive a
     server restart are in Deferred.
+24. [x] Crystallize below the client timeout: `crystallize` waits at most
+    `timeouts.wait`, then returns `state: running` with a `crystallize_id`
+    and its `stage`; the work goes on in the server and
+    `wait_crystallize(crystallize_id)` returns its outcome. The drafts
+    lock is held only until the drafts are copied into the worktree.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
