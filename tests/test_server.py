@@ -502,3 +502,13 @@ async def test_delete_pipeline(config: Config) -> None:
     assert (missing["code"], missing["saved"]) == ("not_found", ["kept"])
     annotations = tools["delete_pipeline"].annotations
     assert annotations is not None and annotations.destructive_hint is True
+
+
+async def test_traces_record_the_draft_code(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        result = await call(client, "run", spec=op("shout@1"), input="x")
+        card = await call(client, "get_operator", ref="shout@1")
+
+    assert "drafts" not in result
+    [trace] = traces(config)
+    assert trace["drafts"] == {"shout@1": card["fingerprint"]}

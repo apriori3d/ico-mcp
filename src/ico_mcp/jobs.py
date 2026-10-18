@@ -166,6 +166,7 @@ class Jobs:
                 if on_progress is not None:
                     await on_progress(snapshot)
 
+        drafts: JsonValue = None
         async with job.kernel:
             try:
                 await job.kernel.start()
@@ -176,6 +177,8 @@ class Jobs:
                             "run", params, on_notification=on_notification
                         ),
                     )
+                    # Which draft code the run used: for the trace only.
+                    drafts = job.result.pop("drafts", None)
             except KernelError as e:
                 job.error = e.to_dict()
         if job.cancelled and job.result is None:
@@ -195,6 +198,7 @@ class Jobs:
             progress=_final_progress(job.board),
             pipeline=pipeline,
             params=cast(JsonObject | None, params.get("params")),
+            drafts=cast(JsonObject | None, drafts),
         )
         job.finished.set()
 

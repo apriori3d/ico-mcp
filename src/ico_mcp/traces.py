@@ -29,12 +29,14 @@ def write(
     progress: list[JsonValue],
     pipeline: str | None = None,
     params: JsonObject | None = None,
+    drafts: JsonObject | None = None,
 ) -> Path:
     """Append a trace line for one run; ``started`` must be timezone-aware.
 
     ``progress`` is the final state of each progress node; ``pipeline`` the
     name of a saved pipeline run by name; ``params`` the values given for
-    its parameters.
+    its parameters; ``drafts`` the fingerprint of each draft operator's
+    module (which draft code the run used).
     """
     started = started.astimezone(UTC)
     trace: JsonObject = {
@@ -45,6 +47,7 @@ def write(
         "input": _shorten(input),
         "pipeline": pipeline,
         "params": _shorten(params) if params is not None else None,
+        "drafts": drafts,
         "ok": error is None,
         "result": _summary(result) if result is not None else None,
         "error": cast(JsonObject, _shorten(error)) if error is not None else None,

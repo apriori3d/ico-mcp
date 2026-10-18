@@ -412,7 +412,8 @@ def _body(
         runs = recent.get(ref, [])
         if not runs:
             lines.append("- none recorded")
-        lines.extend(f"- {_run_line(trace)}" for trace in runs)
+        current = card.get("fingerprint")
+        lines.extend(f"- {_run_line(trace, ref, current)}" for trace in runs)
     return "\n".join(lines) + "\n"
 
 
@@ -442,7 +443,7 @@ def _trace_stats(
     return stats, recent
 
 
-def _run_line(trace: JsonObject) -> str:
+def _run_line(trace: JsonObject, ref: str, current: JsonValue = None) -> str:
     """``2026-10-18 09:12 · split_scenes · input `/v/02.mp4` · 12 output(s)
     · 0 item error(s) · 41.2 s``"""
     parts = [str(trace.get("ts", "")).replace("T", " ")[:16]]
@@ -466,6 +467,10 @@ def _run_line(trace: JsonObject) -> str:
     duration = trace.get("duration")
     if isinstance(duration, int | float):
         parts.append(f"{duration:.1f} s")
+    drafts = trace.get("drafts")
+    used = drafts.get(ref) if isinstance(drafts, dict) else None
+    if current is not None and used is not None and used != current:
+        parts.append("(earlier draft code)")
     return " · ".join(parts)
 
 

@@ -21,11 +21,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from ico_mcp import pipelines, traces
 from ico_mcp.config import Config
 from ico_mcp.drafts import draft_imports
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
 from ico_mcp.typecheck import TypecheckError, typecheck
+
+PIPELINES_HINT = (
+    "a saved pipeline no longer validates: fix it (save_pipeline with "
+    "replace=true), or register a new operator version (@2) in a new draft "
+    "module if the old behaviour is still needed"
+)
 
 NOT_FOR_EXAMPLES = (
     "examples are for operators with JSON input and JSON output that need no "
@@ -94,6 +101,7 @@ async def propose(
         ProposalError: At the first failing stage.
     """
     text = module_code(config, module, code, edits)
+    before = await _module_cards(kernel, f"{config.draft_dir.name}.{module}")
     path, name, warnings = await _load(config, kernel, module, text, check_types)
     found = cast(
         JsonObject, await _request(kernel, "register", "module_cards", {"module": name})
@@ -119,13 +127,18 @@ async def propose(
     cards_out.extend(cards)
     warnings_out: list[JsonValue] = []
     warnings_out.extend(warnings)
+    changes, affected = await _changes(config, kernel, before, cards)
     result: JsonObject = {
         "module": name,
         "path": str(path.relative_to(config.root)),
         "cards": cards_out,
         "warnings": warnings_out,
         "examples": passed,
+        "changes": changes,
+        "pipelines": affected,
     }
+    if any(not cast(JsonObject, p)["ok"] for p in affected):
+        result["hint"] = PIPELINES_HINT
     if edits is not None:
         result["edits"] = len(edits)
     return result
@@ -340,6 +353,83 @@ def _save_examples(config: Config, examples: Sequence[Example]) -> None:
     for ref, items in by_ref.items():
         path = config.examples_dir / f"{ref}.json"
         path.write_text(json.dumps(items, indent=2, ensure_ascii=False) + "\n")
+
+
+async def _module_cards(kernel: KernelClient, module: str) -> dict[str, JsonObject]:
+    """The cards a module registers now, by ref (empty if it does not load)."""
+    try:
+        found = cast(
+            JsonObject, await kernel.request("module_cards", {"module": module})
+        )
+    except KernelError:
+        return {}
+    cards = cast(list[JsonObject], found["cards"])
+    return {f"{c['name']}@{c['version']}": c for c in cards}
+
+
+async def _changes(
+    config: Config,
+    kernel: KernelClient,
+    before: dict[str, JsonObject],
+    after: Sequence[JsonObject],
+) -> tuple[JsonObject, list[JsonValue]]:
+    """What a replaced module changed for the saved pipelines.
+
+    Returns ``{"changed": [...], "removed": [...]}`` (operators whose
+    ``sig`` or ``params`` changed, operators no longer registered, each
+    with the saved pipelines that use it) and the validation of those
+    pipelines, ``[{"name", "ok", "issues"}]``.
+    """
+    now = {f"{c['name']}@{c['version']}": c for c in after}
+    uses: dict[str, list[str]] = {}
+    for pipeline in pipelines.names(config.pipelines_dir):
+        doc = pipelines.load(config.pipelines_dir, pipeline)
+        for ref in traces.op_refs(doc):
+            uses.setdefault(ref, []).append(pipeline)
+
+    changed: list[JsonValue] = []
+    removed: list[JsonValue] = []
+    touched: set[str] = set()
+    for ref, old in sorted(before.items()):
+        users: list[JsonValue] = []
+        users.extend(uses.get(ref, []))
+        new = now.get(ref)
+        if new is None:
+            removed.append({"ref": ref, "pipelines": users})
+        elif (old.get("sig"), old.get("params")) != (new.get("sig"), new.get("params")):
+            entry: JsonObject = {"ref": ref, "pipelines": users}
+            if old.get("sig") != new.get("sig"):
+                entry["sig"] = {"before": old.get("sig"), "after": new.get("sig")}
+            if old.get("params") != new.get("params"):
+                entry["params"] = {
+                    "before": old.get("params"),
+                    "after": new.get("params"),
+                }
+            changed.append(entry)
+        else:
+            continue
+        touched.update(uses.get(ref, []))
+
+    checked: list[JsonValue] = []
+    for pipeline in sorted(touched):
+        doc = pipelines.load(config.pipelines_dir, pipeline)
+        request: JsonObject = {"spec": doc}
+        values = pipelines.check_params(doc)
+        if values is not None:
+            request["params"] = values
+        try:
+            report = cast(JsonObject, await kernel.request("validate", request))
+            issues = [
+                i
+                for i in cast(list[JsonObject], report["issues"])
+                if i.get("severity") == "error"
+            ]
+        except KernelError as e:
+            issues = [e.to_dict()]
+        errors: list[JsonValue] = []
+        errors.extend(issues)
+        checked.append({"name": pipeline, "ok": not issues, "issues": errors})
+    return {"changed": changed, "removed": removed}, checked
 
 
 async def _request(

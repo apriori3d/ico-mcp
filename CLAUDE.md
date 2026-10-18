@@ -148,6 +148,12 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     `bin:<name>` capabilities); `get_operator` shows `bins`; `validate`
     warns `missing_binary`. Guide: binaries as params, lazy imports of
     heavy frameworks.
+19. [x] Draft fingerprints (item 10 of the same proposal): draft cards
+    carry the fingerprint of their module; run traces record it per
+    draft ref; the crystallize PR marks runs on earlier draft code. A new
+    proposal of a module reports changed / removed operators with the
+    saved pipelines using them and re-validates those pipelines (it does
+    not fail on them).
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

@@ -166,6 +166,11 @@ async def test_crystallize_opens_a_pull_request(repo: Config) -> None:
             client, "save_pipeline", name="slug", spec=spec, description="Slugs."
         )
         await call(client, "run", spec=spec, input="X Y")
+        await call(
+            client, "propose_operator", module="slug",
+            edits=[{"old": "Lower-case words", "new": "Lower-case words,"}],
+        )  # fmt: skip
+        await call(client, "run", spec=spec, input="Z")
         opened = await call(
             client,
             "crystallize",
@@ -193,11 +198,14 @@ async def test_crystallize_opens_a_pull_request(repo: Config) -> None:
     )
     body = (repo.root.parent / "pr-body.md").read_text()
     assert "Frames and slugs." in body and "`first_frame@1`" in body
-    assert "| `slugify@1` | 1 | 1 |" in body
+    assert "| `slugify@1` | 2 | 2 |" in body
     assert "Added as relative imports of the moved modules: frames" in body
     assert "## Recent successful runs" in body
     recent = body.split("## Recent successful runs")[1]
-    assert "input `X Y` · 1 output(s) · 0 item error(s)" in recent
+    assert "input `Z` · 1 output(s) · 0 item error(s)" in recent
+    [earlier] = [line for line in recent.splitlines() if "input `X Y`" in line]
+    assert earlier.endswith("(earlier draft code)")
+    assert "input `Z`" in recent and "`Z` · 1 output(s) · 0 item error(s) ·" in recent
     assert "`first_frame@1`:\n- none recorded" in recent
     # The working tree is untouched: drafts stay and keep loading.
     assert not (repo.stable_dir / "video.py").exists()

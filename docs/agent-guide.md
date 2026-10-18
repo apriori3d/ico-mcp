@@ -319,6 +319,13 @@ Rules:
   distributions (e.g. three OpenCV builds sharing `cv2`).
 - Keep `typecheck` on (pyright strict). Untyped third-party libraries
   need `cast` or a narrow wrapper typed by you.
+- **Replacing a draft that saved pipelines use.** A new proposal of a
+  module reports `changes` (operators whose `sig` or `params` changed, or
+  that are gone, with the saved pipelines using them) and re-validates
+  those `pipelines`. Fix a pipeline that no longer validates, or register
+  a new version (`@2`) in a new module when the old behaviour is still
+  needed. Draft cards carry a `fingerprint` of their module; run traces
+  record it, so the crystallize PR can tell runs on earlier draft code.
 - **Small fixes as edits.** `code` is for a new module or a rewrite. To
   change an existing draft, send `edits=[{"old": ..., "new": ...}]`
   (also for `propose_types`): replacements applied in order, each `old`
