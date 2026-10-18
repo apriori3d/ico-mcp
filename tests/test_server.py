@@ -40,6 +40,7 @@ TOOLS = {
     "server_status",
     "delete_pipeline",
     "environment",
+    "wait_run",
 }
 
 
@@ -100,6 +101,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "guide",
         "server_status",
         "environment",
+        "wait_run",
     }
 
 
@@ -512,3 +514,70 @@ async def test_traces_record_the_draft_code(config: Config) -> None:
     assert "drafts" not in result
     [trace] = traces(config)
     assert trace["drafts"] == {"shout@1": card["fingerprint"]}
+
+
+# ─── wait_run ───
+
+
+async def test_wait_run_returns_when_the_run_ends(
+    config: Config, progress_spec_of: Callable[[int], dict[str, Any]]
+) -> None:
+    updates: list[tuple[float, float | None, str | None]] = []
+
+    async def on_progress(
+        progress: float, total: float | None, message: str | None
+    ) -> None:
+        updates.append((progress, total, message))
+
+    async with Client(create_server(config)) as client:
+        started = await call(
+            client, "run", spec=progress_spec_of(3), input="a b c", wait=False
+        )
+        clock = time.monotonic()
+        finished = await call(client, "wait_run", run_id=started["run_id"], timeout=30)
+        elapsed = time.monotonic() - clock
+        again = await client.call_tool(
+            "wait_run",
+            {"run_id": started["run_id"], "timeout": 5},
+            progress_callback=on_progress,
+        )
+
+    assert finished["state"] == "done" and elapsed < 25
+    assert finished["result"]["outputs"] == ["A", "B", "C"]
+    assert not again.is_error
+    assert updates == [(3, 3, "words 3/3")]  # the first node, from the board
+
+
+async def test_wait_run_times_out_on_a_running_run(
+    config: Config, tmp_path: Path
+) -> None:
+    pid_file = tmp_path / "worker.pid"
+    async with Client(create_server(config)) as client:
+        started = await call(
+            client, "run", spec=op("hang@1"), input=str(pid_file), wait=False
+        )
+        await wait_for(pid_file.exists)
+        clock = time.monotonic()
+        still = await call(client, "wait_run", run_id=started["run_id"], timeout=1)
+        elapsed = time.monotonic() - clock
+        await call(client, "cancel_run", run_id=started["run_id"])
+        cancelled = await call(client, "wait_run", run_id=started["run_id"], timeout=5)
+
+    assert still["state"] == "running" and 0.9 <= elapsed < 5
+    assert cancelled["state"] == "failed"
+    assert cancelled["kernel_error"]["code"] == "cancelled"
+
+
+async def test_wait_run_errors(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        missing = await call_error(client, "wait_run", run_id="nope")
+        done = await call(client, "run", spec=op("shout@1"), input="x")
+        too_short = await call_error(
+            client, "wait_run", run_id=done["run_id"], timeout=0
+        )
+        too_long = await call_error(
+            client, "wait_run", run_id=done["run_id"], timeout=601
+        )
+
+    assert missing["code"] == "not_found"
+    assert too_short["code"] == too_long["code"] == "bad_request"
