@@ -378,3 +378,20 @@ async def test_edits_of_a_types_module(config: Config) -> None:
         "index",
         "time",
     ]
+
+
+async def test_examples_of_a_domain_operator_explain_why_not(config: Config) -> None:
+    examples = [
+        {"ref": "first_frame@1", "input": "/v.mp4", "output": {"path": "/v.mp4"}}
+    ]
+    async with Client(create_server(config)) as client:
+        await tool(client, "propose_types", module="frames", code=FRAMES)
+        error = await rejected(
+            client, module="video", code=FRAME_OPS, examples=examples
+        )
+
+    assert error["stage"] == "examples"
+    assert "needs no examples" in error["message"]
+    [failure] = error["diagnostics"]
+    assert "not JSON-compatible" in failure["error"]["message"]
+    assert "pipeline run" in failure["hint"]

@@ -137,6 +137,10 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     instead of `code` (each `old` exactly once, applied in order, a failed
     edit changes nothing); `get_operator` gives a draft's
     `module_source`.
+17. [x] Examples only for pure operators (item 11 of the same proposal,
+    revised): an example whose output is not JSON explains that domain
+    operators need no examples; the crystallize PR shows each operator's
+    recent successful runs from the traces as the evidence.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
