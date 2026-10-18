@@ -30,7 +30,7 @@ from ico_mcp.crystallize import crystallize as open_pull_request
 from ico_mcp.jobs import Jobs
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
-from ico_mcp.proposals import Example, ProposalError, propose
+from ico_mcp.proposals import Edit, Example, ProposalError, propose
 from ico_mcp.proposals import propose_types as stage_types
 from ico_mcp.protocol import JsonObject, KernelError
 from ico_mcp.version import DEFAULT_PACKAGES, ServerStatus
@@ -102,6 +102,13 @@ JsonInput = Annotated[
 ]
 """A JSON value with an explicit schema: without one, clients pass strings
 with their quotes."""
+
+
+class ModuleEdit(BaseModel):
+    """Replace the only occurrence of `old` in the draft module by `new`."""
+
+    old: str
+    new: str
 
 
 class OperatorExample(BaseModel):
@@ -189,24 +196,31 @@ def create_server(
     async def get_operator(ref: str) -> dict[str, JsonValue]:
         """The card and source code of an operator (`name@version`).
 
-        Read the source only to write or fix an operator, not to use one.
+        Read the source only to write or fix an operator, not to use one. A
+        draft operator also has `module_source`, the text of its whole
+        module, to write `edits` for propose_operator.
         """
         return await call("card", {"ref": ref})
 
     @server.tool(annotations=WRITES)
     async def propose_operator(
         module: str,
-        code: str,
+        code: str | None = None,
+        edits: list[ModuleEdit] | None = None,
         typecheck: bool = True,
         examples: list[OperatorExample] | None = None,
     ) -> dict[str, JsonValue]:
         """Add or replace a draft operator module, then reload the operators.
 
-        Stages: write `<draft package>/<module>.py`, typecheck (pyright),
-        load, register (at least one operator, no `Any` in signatures),
-        examples. The first failing stage is reported with diagnostics; the
-        file stays so that it can be fixed with another proposal. Operator
-        source does not set `status`: drafts are `draft`.
+        Give the whole module as `code`, or, for a small change of an
+        existing draft, `edits`: `[{"old", "new"}]` replacements applied in
+        order, each `old` occurring exactly once (see `module_source` of
+        get_operator). Stages: write `<draft package>/<module>.py`,
+        typecheck (pyright), load, register (at least one operator, no `Any`
+        in signatures), examples. The first failing stage is reported with
+        diagnostics; the file stays so that it can be fixed with another
+        proposal (a failed edit changes nothing). Operator source does not
+        set `status`: drafts are `draft`.
         """
         given = [Example(e.ref, e.input, e.output) for e in examples or []]
         async with proposing:
@@ -216,6 +230,7 @@ def create_server(
                     kernel,
                     module=module,
                     code=code,
+                    edits=_edits(edits),
                     check_types=typecheck,
                     examples=given,
                 )
@@ -224,18 +239,28 @@ def create_server(
 
     @server.tool(annotations=WRITES)
     async def propose_types(
-        module: str, code: str, typecheck: bool = True
+        module: str,
+        code: str | None = None,
+        edits: list[ModuleEdit] | None = None,
+        typecheck: bool = True,
     ) -> dict[str, JsonValue]:
         """Add or replace a draft module of domain types, then reload.
 
-        Stages: write `<draft package>/<module>.py`, typecheck (pyright),
-        load, types (at least one public class, no operators). Operator
-        modules import the types relatively: `from .<module> import Name`.
+        Give the whole module as `code`, or `edits` for a small change of an
+        existing draft (as for propose_operator). Stages: write
+        `<draft package>/<module>.py`, typecheck (pyright), load, types (at
+        least one public class, no operators). Operator modules import the
+        types relatively: `from .<module> import Name`.
         """
         async with proposing:
             try:
                 return await stage_types(
-                    config, kernel, module=module, code=code, check_types=typecheck
+                    config,
+                    kernel,
+                    module=module,
+                    code=code,
+                    edits=_edits(edits),
+                    check_types=typecheck,
                 )
             except ProposalError as e:
                 raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
@@ -515,6 +540,10 @@ def create_server(
         return await server_report()
 
     return server
+
+
+def _edits(edits: list[ModuleEdit] | None) -> list[Edit] | None:
+    return None if edits is None else [Edit(e.old, e.new) for e in edits]
 
 
 def _saved(config: Config, name: str) -> JsonObject:

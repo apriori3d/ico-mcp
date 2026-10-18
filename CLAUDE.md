@@ -132,6 +132,11 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     start with the version and commit.
 15. [x] `delete_pipeline(name)` (item 13 of the same proposal): removes a
     saved pipeline; `not_found` lists the saved ones.
+16. [x] Edits of draft modules (item 9 of the same proposal):
+    `propose_operator` / `propose_types` take `edits=[{"old", "new"}]`
+    instead of `code` (each `old` exactly once, applied in order, a failed
+    edit changes nothing); `get_operator` gives a draft's
+    `module_source`.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
