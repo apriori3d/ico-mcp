@@ -29,7 +29,7 @@ def test_minimal_config_uses_defaults(tmp_path: Path) -> None:
 
     assert config == Config(root=tmp_path.resolve(), name="demo", package="domain")
     assert config.github is None
-    assert config.timeouts == Timeouts(run=600, validate=30, load=60)
+    assert config.timeouts == Timeouts(run=600, validate=30, load=60, wait=45)
     assert config.env == ()
     assert config.typecheck == "strict"
 
@@ -39,14 +39,14 @@ def test_full_config(tmp_path: Path) -> None:
 name = "vision"
 package = "vision"
 github = { repo = "owner/vision-mcp", base = "dev" }
-timeouts = { run = 120, validate = 5.5, load = 10 }
+timeouts = { run = 120, validate = 5.5, load = 10, wait = 20 }
 env = ["HF_HOME", "CUDA_VISIBLE_DEVICES"]
 typecheck = "standard"
 """
     config = load_config(make_repo(tmp_path, toml, package="vision"))
 
     assert config.github == GithubConfig(repo="owner/vision-mcp", base="dev")
-    assert config.timeouts == Timeouts(run=120, validate=5.5, load=10)
+    assert config.timeouts == Timeouts(run=120, validate=5.5, load=10, wait=20)
     assert config.env == ("HF_HOME", "CUDA_VISIBLE_DEVICES")
     assert config.typecheck == "standard"
 
@@ -102,6 +102,10 @@ def test_invalid_toml(tmp_path: Path) -> None:
         (
             MINIMAL + "timeouts = { load = true }\n",
             "timeouts.load: expected a positive number",
+        ),
+        (
+            MINIMAL + "timeouts = { wait = -1 }\n",
+            "timeouts.wait: expected a positive number",
         ),
         (MINIMAL + "timeouts = { kill = 5 }\n", "unknown keys: timeouts.kill"),
         (MINIMAL + "timeouts = 5\n", "timeouts: expected a table"),

@@ -129,7 +129,10 @@ was installed from.
 3. Edit `ico.toml`: `name`, `package = "<pkg>"`, and
    `github = { repo = "owner/<pkg>-mcp", base = "main" }` for
    crystallization. `env` lists the variables the operators may read
-   (e.g. `HF_HOME`); others never reach them.
+   (e.g. `HF_HOME`); others never reach them. `timeouts.wait` (45 s) is the
+   longest a tool call waits for a run: keep it below your client's
+   tool-call timeout (about 60 s in the Claude app), which restarts the
+   server and loses its runs.
 4. Edit `pyproject.toml`: the project `name`, and add the domain's
    dependencies (e.g. torch); operators run with the same environment.
 5. Delete the demo draft `domain_draft/demo.py` and its example.

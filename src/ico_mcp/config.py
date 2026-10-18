@@ -47,11 +47,17 @@ class GithubConfig:
 
 @dataclass(frozen=True, slots=True)
 class Timeouts:
-    """Kernel request timeouts in seconds."""
+    """Timeouts in seconds: kernel requests (``run``, ``validate``,
+    ``load``) and the longest a tool call waits for a run (``wait``)."""
 
     run: float = 600
     validate: float = 30
     load: float = 60
+    wait: float = 45
+    """The longest ``run(wait=true)`` and ``wait_run`` block before they
+    return a running run; keep it below the client's tool-call timeout
+    (about 60 s in the Claude app), which restarts the server and loses the
+    run."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +166,7 @@ def _timeouts(table: _Table) -> Timeouts:
         run=table.positive("run", defaults.run),
         validate=table.positive("validate", defaults.validate),
         load=table.positive("load", defaults.load),
+        wait=table.positive("wait", defaults.wait),
     )
     table.reject_unknown()
     return timeouts

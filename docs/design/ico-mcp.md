@@ -82,7 +82,7 @@ ico-mcp/                     # clone → e.g. mydomain-mcp
 name = "domain"
 package = "domain"             # stable package; drafts in domain_draft
 github = { repo = "owner/domain-mcp", base = "main" }
-timeouts = { run = 600, validate = 30, load = 60 }
+timeouts = { run = 600, validate = 30, load = 60, wait = 45 }
 env = ["HF_HOME"]              # variables passed to the kernel
 typecheck = "strict"           # pyright mode for drafts
 ```
@@ -289,8 +289,12 @@ with a one-time token. ico-mcp only hosts it:
 
 Then asynchronous runs: `run(wait=false)` returns a `run_id`,
 `run_status(run_id)` returns the same snapshot the dashboard uses,
-`cancel_run` stops a run. This also avoids client tool-call timeouts on
-long runs.
+`cancel_run` stops a run. No tool call waits for a run longer than
+`timeouts.wait` (45 s): a client restarts the server after its tool-call
+timeout (about 60 s in the Claude app), and the server's runs die with it
+(see "Runs that survive a server restart" in Deferred). `run(wait=true)`
+returns a still running run with `state: running` and `waited`, and
+`wait_run` cuts its `timeout` to `timeouts.wait`.
 
 Each run (also with `wait=true`) has a kernel process of its own. ICO
 cannot interrupt a running flow, so `cancel_run` kills the run's kernel and
@@ -337,3 +341,14 @@ token and time savings depend on it:
   clones by a version bump. Revisit with the second or third domain.
 - Entry points for installed domain packages.
 - Resources in specs, context nodes (see ico `docs/design/spec.md`).
+- Runs that survive a server restart. Today a run lives in the server
+  process: its kernel is the server's child, connected by pipes, and the
+  registry of runs is in memory. When the server stops (the client
+  restarts it after a tool-call timeout, a reconnect after `stale`, a
+  crash), its active runs are killed or lost, and `run_status` of the new
+  server answers `not_found`. A fix would detach the run's kernel from the
+  server, write its state, progress and result to `runs/<run_id>/`, and
+  let a new server pick up unfinished runs (`run_status`, `wait_run` and
+  the dashboard by `run_id`). Not needed while tool calls stay below the
+  client's timeout (`timeouts.wait`); revisit when restarts for other
+  reasons cost real runs.
