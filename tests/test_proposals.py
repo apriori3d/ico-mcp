@@ -395,3 +395,58 @@ async def test_examples_of_a_domain_operator_explain_why_not(config: Config) -> 
     [failure] = error["diagnostics"]
     assert "not JSON-compatible" in failure["error"]["message"]
     assert "pipeline run" in failure["hint"]
+
+
+# ─── Changes of a replaced module ───
+
+PAD = """from ico import IcoOperator
+from ico.registry import register
+
+
+@register("pad", 1)
+class Pad(IcoOperator[str, str]):
+    \"\"\"Pad a text on the left.\"\"\"
+
+    def __init__(self, width: int) -> None:
+        self.width = width
+        super().__init__(fn=self._apply)
+
+    def _apply(self, text: str) -> str:
+        return text.rjust(self.width)
+"""
+
+PAD_RENAMED = PAD.replace("width", "size")
+
+
+async def test_a_changed_operator_reports_its_broken_pipelines(config: Config) -> None:
+    spec = {"kind": "op", "op": "pad@1", "params": {"width": 6}}
+    async with Client(create_server(config)) as client:
+        first = await propose(client, module="pad", code=PAD)
+        await tool(client, "save_pipeline", name="padded", spec=spec, description="")
+        await tool(
+            client,
+            "save_pipeline",
+            name="other",
+            spec={"kind": "op", "op": "shout@1"},
+            description="",
+        )
+        same = await propose(
+            client,
+            module="pad",
+            edits=[{"old": "on the left", "new": "on the left side"}],
+        )
+        renamed = await propose(client, module="pad", code=PAD_RENAMED)
+        gone = await propose(client, module="pad", code=SLUGIFY)
+
+    assert first["changes"] == {"changed": [], "removed": []}
+    assert first["pipelines"] == []
+    assert same["changes"] == {"changed": [], "removed": []}
+    [change] = renamed["changes"]["changed"]
+    assert change["ref"] == "pad@1" and change["pipelines"] == ["padded"]
+    assert change["params"]["before"][0]["name"] == "width"
+    assert change["params"]["after"][0]["name"] == "size"
+    [checked] = renamed["pipelines"]
+    assert (checked["name"], checked["ok"]) == ("padded", False)
+    assert checked["issues"]
+    assert "new operator version" in renamed["hint"]
+    assert gone["changes"]["removed"] == [{"ref": "pad@1", "pipelines": ["padded"]}]

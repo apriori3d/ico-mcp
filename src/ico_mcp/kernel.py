@@ -19,6 +19,7 @@ sent first, unless the spec does not build. ``snapshot`` is a
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import os
 import re
@@ -143,7 +144,7 @@ class Kernel:
             text=text,
         )
         cards: list[JsonValue] = []
-        cards.extend(entry.card() for entry in entries[:limit])
+        cards.extend(_card(entry) for entry in entries[:limit])
         return {"cards": cards, "total": len(entries)}
 
     def card(self, params: JsonObject) -> JsonValue:
@@ -155,7 +156,7 @@ class Kernel:
                 "not_found", f"operator {ref!r} is not registered"
             ) from None
         card: JsonObject = {
-            **entry.card(),
+            **_card(entry),
             "module": entry.module,
             "source": _source(entry),
         }
@@ -252,7 +253,9 @@ class Kernel:
             raise KernelError(
                 "run_error", f"{type(e).__name__}: {e}", _traceback(e)
             ) from None
-        return result.to_dict()
+        out = cast(JsonObject, result.to_dict())
+        out["drafts"] = _draft_fingerprints(_required(params, "spec", dict))
+        return out
 
     def _send_plan(
         self, spec: PipelineSpec | NodeSpec, values: JsonObject | None
@@ -342,6 +345,49 @@ def _issue(issue: SignatureIssue) -> JsonObject:
         "got": format_ico_type(issue.output) if issue.output is not None else None,
         "refs": [issue.left, issue.right],
     }
+
+
+def _card(entry: RegistryEntry) -> JsonObject:
+    """A registry card; a draft's card adds the fingerprint of its module."""
+    card = cast(JsonObject, entry.card())
+    if entry.meta.status == "draft" and entry.module is not None:
+        card["fingerprint"] = _fingerprint(entry.module)
+    return card
+
+
+def _fingerprint(module: str) -> str | None:
+    """A short hash of a draft module's text: which code a run used."""
+    text = _module_source(module)
+    if text is None:
+        return None
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
+
+
+def _draft_fingerprints(spec: JsonObject) -> JsonObject:
+    """``{ref: fingerprint}`` of the draft operators a spec uses."""
+    out: JsonObject = {}
+    for ref in sorted(_op_refs(spec)):
+        try:
+            entry = default_registry.get(ref)
+        except KeyError:
+            continue
+        if entry.meta.status == "draft" and entry.module is not None:
+            out[ref] = _fingerprint(entry.module)
+    return out
+
+
+def _op_refs(value: JsonValue) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, dict):
+        ref = value.get("op")
+        if isinstance(ref, str):
+            refs.add(ref)
+        for child in value.values():
+            refs |= _op_refs(child)
+    elif isinstance(value, list):
+        for child in value:
+            refs |= _op_refs(child)
+    return refs
 
 
 def _missing_binaries(spec: JsonObject) -> list[JsonValue]:

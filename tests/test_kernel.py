@@ -302,7 +302,21 @@ async def test_run_returns_outputs(config: Config) -> None:
         "total": 1,
         "truncated": False,
         "errors": [],
+        "drafts": {},
     }
+
+
+async def test_run_reports_the_draft_code_it_used(config: Config) -> None:
+    async with KernelClient(config) as kernel:
+        result = await request(
+            kernel, "run", {"spec": seq("shout@1", "count_words@1"), "input": "a b"}
+        )
+        card = await request(kernel, "card", {"ref": "shout@1"})
+        stable = await request(kernel, "card", {"ref": "count_words@1"})
+
+    assert result["drafts"] == {"shout@1": card["fingerprint"]}
+    assert len(card["fingerprint"]) == 12
+    assert "fingerprint" not in stable
 
 
 async def test_run_streams_progress_notifications(
