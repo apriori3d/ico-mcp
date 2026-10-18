@@ -172,6 +172,12 @@ Per-item work with progress (put `progress` **inside** the stream):
 ]}
 ```
 
+A progress node without `total` gets one from its stream when the
+producer returns an iterator that knows its length: `iter(list)` or
+`iter(range(...))`, not a generator. So an operator that knows how many
+items it produces (scenes of a video, files of a directory) returns
+`iter(items)`; the bar then shows a percentage and an ETA, per input.
+
 The same in parallel processes, one copy of the flow per worker, per-item
 errors collected instead of stopping the run:
 
