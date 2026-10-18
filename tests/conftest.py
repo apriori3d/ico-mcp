@@ -111,6 +111,12 @@ class Repeat(IcoOperator[str, str]):
         return self.sep.join([text] * self.times)
 
 
+@register("shell", 1, caps={"bin:sh", "bin:ico-test-missing-binary"})
+def shell(text: str) -> str:
+    """Pretend to need two external programs."""
+    return text
+
+
 @register("getenv", 1)
 def getenv(name: str) -> str:
     """Read an environment variable."""

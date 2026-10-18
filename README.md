@@ -115,6 +115,7 @@ was installed from.
 | `save_pipeline` / `list_pipelines` / `get_pipeline` / `delete_pipeline` | saved, validated specs |
 | `crystallize` | a pull request that makes drafts stable |
 | `reload` | restart the kernel after a merge or manual edits |
+| `environment` | Python, PATH, packages (and duplicate builds), binaries of `bin:` caps, as operators see them |
 | `server_status` | the code this server process runs; `stale` when the code on disk is newer (reconnect the server) |
 
 ## Specialize a clone

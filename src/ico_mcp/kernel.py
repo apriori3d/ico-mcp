@@ -41,6 +41,7 @@ from ico.registry import RegistryEntry, default_registry, load_operators
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
 from ico.spec.run import DEFAULT_MAX_ITEMS
 
+from ico_mcp import environment
 from ico_mcp.config import Config, load_config
 from ico_mcp.domain_types import DomainType, collect
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError, decode, encode
@@ -79,6 +80,7 @@ class Kernel:
             "types": self.list_types,
             "type": self.type_card,
             "module_types": self.module_types,
+            "environment": self.environment,
             "validate": self.validate,
             "run": self.run,
         }
@@ -159,6 +161,11 @@ class Kernel:
         }
         if entry.meta.status == "draft" and entry.module is not None:
             card["module_source"] = _module_source(entry.module)
+        needed = environment.bin_names(entry.meta.caps)
+        if needed:
+            resolved: JsonObject = {}
+            resolved.update(environment.bins(needed))
+            card["bins"] = resolved
         return card
 
     def module_cards(self, params: JsonObject) -> JsonValue:
@@ -195,6 +202,17 @@ class Kernel:
         refs.extend(entry.ref for entry in default_registry if entry.module == module)
         return {"types": cards, "operators": refs}
 
+    def environment(self, params: JsonObject) -> JsonValue:
+        """Python, PATH, allowed variables, packages, duplicates and the
+        binaries of ``bin:`` capabilities, as operators see them."""
+        match = _optional(params, "match", str)
+        needed = [
+            name
+            for entry in default_registry
+            for name in environment.bin_names(entry.meta.caps)
+        ]
+        return environment.report(self.config, needed, match)
+
     def validate(self, params: JsonObject) -> JsonValue:
         """Signature issues of a spec built with ``params``, and the pipeline
         parameters it declares (also when values are missing)."""
@@ -202,6 +220,7 @@ class Kernel:
         values = _values(params)
         declared: JsonValue = None
         issues: list[JsonValue] = []
+        issues.extend(_missing_binaries(_required(params, "spec", dict)))
         try:
             found: list[JsonValue] = []
             found.extend(p.to_dict() for p in spec_params(spec))
@@ -323,6 +342,42 @@ def _issue(issue: SignatureIssue) -> JsonObject:
         "got": format_ico_type(issue.output) if issue.output is not None else None,
         "refs": [issue.left, issue.right],
     }
+
+
+def _missing_binaries(spec: JsonObject) -> list[JsonValue]:
+    """Warnings for ``bin:`` capabilities of the spec's operators that are not
+    on the kernel's PATH (an operator may still get a full path as a param)."""
+    root = spec.get("root", spec)
+    found: list[JsonValue] = []
+
+    def walk(node: JsonValue, path: tuple[int, ...]) -> None:
+        if not isinstance(node, dict):
+            return
+        ref = node.get("op")
+        if isinstance(ref, str):
+            try:
+                caps = default_registry.get(ref).meta.caps
+            except KeyError:
+                caps = frozenset[str]()  # an unknown operator fails in build
+            for name, where in environment.bins(environment.bin_names(caps)).items():
+                if where is None:
+                    found.append(
+                        {
+                            "severity": "warning",
+                            "kind": "missing_binary",
+                            "message": f"{ref} needs `{name}` (cap bin:{name}), "
+                            "not on the kernel PATH",
+                            "path": ".".join(str(i) for i in path),
+                            "refs": [ref],
+                        }
+                    )
+        children = node.get("children")
+        if isinstance(children, list):
+            for index, child in enumerate(children):
+                walk(child, (*path, index))
+
+    walk(root, ())
+    return found
 
 
 def _module_source(module: str) -> str | None:

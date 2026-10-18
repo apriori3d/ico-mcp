@@ -529,6 +529,18 @@ def create_server(
         }
 
     @server.tool(annotations=READ_ONLY)
+    async def environment(match: str | None = None) -> dict[str, JsonValue]:
+        """What operators see: Python, PATH, allowed environment variables
+        (whether set, never values), timeouts, installed packages (`match`
+        filters by name), duplicates (a package installed by several
+        distributions, e.g. three OpenCV builds) and where the binaries of
+        `bin:<name>` capabilities resolve."""
+        request: JsonObject = {}
+        if match is not None:
+            request["match"] = match
+        return await call("environment", request)
+
+    @server.tool(annotations=READ_ONLY)
     async def server_status() -> dict[str, JsonValue]:
         """The code this server process runs and the code on disk.
 
