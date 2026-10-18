@@ -39,6 +39,7 @@ TOOLS = {
     "guide",
     "server_status",
     "delete_pipeline",
+    "environment",
 }
 
 
@@ -98,6 +99,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "run_status",
         "guide",
         "server_status",
+        "environment",
     }
 
 

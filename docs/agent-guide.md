@@ -237,8 +237,11 @@ from ico.registry import register  # the decorator
 
 - `name`: no `@` or whitespace; `version`: a positive int.
 - `tags`: free labels for search (`{"video", "ocr"}`).
-- `caps`: what the operator needs from its environment, free strings
-  shown on the card: `"gpu"`, `"network"`, `"subprocess:ffmpeg"`.
+- `caps` (capabilities): what the operator needs from its environment,
+  shown on the card: `"gpu"`, `"network"`. An external program is
+  `"bin:<name>"` (`"bin:ffmpeg"`): `get_operator` shows where it
+  resolves, and `validate` warns (`missing_binary`) when it is not on the
+  kernel's `PATH`.
 - The first paragraph of the docstring is the card's `description`:
   write what it does and what the output means.
 - Do not set `status`: the location decides it (draft package → `draft`).
@@ -246,7 +249,7 @@ from ico.registry import register  # the decorator
 **A function** when there is nothing to configure:
 
 ```python
-@register("probe_video", 1, tags={"video"}, caps={"subprocess:ffprobe"})
+@register("probe_video", 1, tags={"video"}, caps={"bin:ffprobe"})
 def probe_video(video: VideoRef) -> VideoInfo:
     """Width, height, fps and duration of a video (ffprobe)."""
     ...
@@ -302,6 +305,18 @@ Rules:
 - Configuration in constructor params, never in closures or globals.
 - Never edit a registered version that others may use: register
   `name@2` in a new draft module.
+- **External programs**: make the binary a param with the plain name as
+  default (`ffmpeg: str = "ffmpeg"`), so a pipeline can pin a full path
+  (`$param`); declare `bin:<name>`; on failure raise with the command's
+  stderr, not only its exit code. What the binary supports (codecs) is
+  the operator's own check.
+- **Heavy frameworks** (torch, paddle, tensorflow) are imported inside the
+  operator on first call, never at module level: the kernel and every
+  worker import all draft modules, and two frameworks in one process can
+  clash (two OpenMP runtimes crash together). Keep operators that need
+  clashing frameworks in different workers. `environment()` shows the
+  packages, and `duplicates` lists packages installed by several
+  distributions (e.g. three OpenCV builds sharing `cv2`).
 - Keep `typecheck` on (pyright strict). Untyped third-party libraries
   need `cast` or a narrow wrapper typed by you.
 - **Small fixes as edits.** `code` is for a new module or a rewrite. To

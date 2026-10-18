@@ -141,6 +141,13 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     revised): an example whose output is not JSON explains that domain
     operators need no examples; the crystallize PR shows each operator's
     recent successful runs from the traces as the evidence.
+18. [x] Environment (items 7 and 7a of the same proposal): an
+    `environment` tool reports what operators see in the kernel (Python,
+    PATH, allowed variables without values, timeouts, packages with a
+    filter, packages installed by several distributions, binaries of
+    `bin:<name>` capabilities); `get_operator` shows `bins`; `validate`
+    warns `missing_binary`. Guide: binaries as params, lazy imports of
+    heavy frameworks.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
