@@ -42,6 +42,7 @@ TOOLS = {
     "delete_pipeline",
     "environment",
     "wait_run",
+    "wait_crystallize",
 }
 
 
@@ -103,6 +104,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "server_status",
         "environment",
         "wait_run",
+        "wait_crystallize",
     }
 
 
