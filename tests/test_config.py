@@ -10,8 +10,6 @@ from ico_mcp.config import (
     load_config,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 
 def make_repo(root: Path, toml: str, package: str = "domain") -> Path:
     for directory in (package, f"{package}_draft"):
@@ -148,12 +146,3 @@ def test_draft_package_must_exist(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="domain_draft is not a package"):
         load_config(tmp_path)
-
-
-def test_template_repository_is_valid() -> None:
-    config = load_config(REPO_ROOT)
-
-    assert config.package == "domain"
-    assert config.github is None
-    assert config.pipelines_dir.is_dir()
-    assert config.examples_dir.is_dir()

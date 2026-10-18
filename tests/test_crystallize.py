@@ -1,7 +1,6 @@
 import dataclasses
 import json
 import os
-import shutil
 import subprocess
 import textwrap
 import time
@@ -12,7 +11,7 @@ import pytest
 from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
 
-from ico_mcp import drafts
+from ico_mcp import drafts, scaffold
 from ico_mcp.config import Config, Timeouts
 from ico_mcp.server import create_server
 
@@ -109,13 +108,8 @@ def repo(
         make_repo(root, 'github = { repo = "acme/demo", base = "main" }\n'),
     )
     (root / "tests").mkdir()
-    shutil.copy(
-        Path(__file__).with_name("test_domain_examples.py"),
-        root / "tests" / "test_domain_examples.py",
-    )
-    (root / ".gitignore").write_text(
-        "__pycache__/\nruns/\ndomain_draft/*\n!domain_draft/__init__.py\n"
-    )
+    (root / "tests" / "test_domain_examples.py").write_text(scaffold.EXAMPLES_TEST)
+    (root / ".gitignore").write_text(scaffold.GITIGNORE)  # drafts are committed
     git(root, "init", "-q", "-b", "main")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "Template")
@@ -218,6 +212,26 @@ async def test_crystallize_opens_a_pull_request(repo: Config) -> None:
     assert (repo.draft_dir / "video.py").exists()
     assert still["cards"][0]["status"] == "draft"
     assert git(repo.root, "worktree", "list").count("\n") == 1
+
+
+async def test_committed_drafts_move_out_of_the_draft_package(repo: Config) -> None:
+    examples = [{"ref": "slugify@1", "input": "A B", "output": "a-b"}]
+    async with Client(create_server(repo)) as client:
+        await call(
+            client, "propose_operator", module="slug", code=SLUGIFY, examples=examples
+        )
+        git(repo.root, "add", "-A")
+        git(repo.root, "commit", "-q", "-m", "Drafts")
+        git(repo.root, "push", "-q", "origin", "main")
+        opened = await call(
+            client, "crystallize", refs=["slugify@1"], title="Slugs", summary="S."
+        )
+
+    branch = opened["branch"]
+    assert branch_file(repo, branch, "domain/slug.py") == SLUGIFY
+    files = git(repo.root.parent / "origin.git", "ls-tree", "-r", "--name-only", branch)
+    assert "domain_draft/slug.py" not in files.split()
+    assert (repo.draft_dir / "slug.py").exists()  # until the merge is pulled
 
 
 async def test_failing_gate_pushes_nothing(repo: Config) -> None:

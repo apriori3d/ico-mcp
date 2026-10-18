@@ -17,7 +17,10 @@ from mcp_types import CallToolResult, TextContent
 
 from ico_mcp import jobs as jobs_module
 from ico_mcp.config import Config, Timeouts
-from ico_mcp.server import INSTRUCTIONS, create_server, default_root
+from ico_mcp.server import INSTRUCTIONS, create_server
+
+REPO = Path(__file__).resolve().parents[1]
+MakeRepo = Callable[..., Config]
 
 pytestmark = pytest.mark.anyio
 
@@ -292,11 +295,6 @@ def test_server_does_not_import_operators(config: Config) -> None:
     )
 
     assert out.stdout.split() == ["False", "0"]
-
-
-def test_default_root_is_this_repository() -> None:
-    assert default_root() == Path(__file__).resolve().parents[1]
-    assert (default_root() / "ico.toml").is_file()
 
 
 def test_main_reports_a_config_error(tmp_path: Path) -> None:
@@ -605,27 +603,47 @@ async def test_shutdown_kills_active_runs(config: Config, tmp_path: Path) -> Non
 # ─── Guide ───
 
 
-async def test_guide_is_the_repository_guide(config: Config) -> None:
+async def test_guide_is_the_package_guide_with_the_domain_notes(
+    config: Config,
+) -> None:
     async with Client(create_server(config)) as client:
-        missing = await client.call_tool("guide", {})
+        without = text(await client.call_tool("guide", {}))
         (config.root / "docs").mkdir()
-        (config.root / "docs" / "agent-guide.md").write_text("# Domain guide\n")
-        found = await client.call_tool("guide", {})
+        (config.root / "docs" / "domain.md").write_text(
+            "## 8. Domain notes\n\nVideos.\n"
+        )
+        with_notes = text(await client.call_tool("guide", {}))
 
-    assert missing.is_error and "agent-guide.md is missing" in text(missing)
-    assert text(found) == "# Domain guide\n"
+    package_guide = (REPO / "src" / "ico_mcp" / "agent-guide.md").read_text()
+    assert without.startswith(package_guide.rstrip())
+    assert without.endswith("This domain has no notes yet (`docs/domain.md`).\n")
+    assert with_notes.endswith("## 8. Domain notes\n\nVideos.\n")
+
+
+async def test_about_goes_into_the_instructions(
+    make_repo: MakeRepo, tmp_path: Path
+) -> None:
+    about = make_repo(tmp_path / "video", 'about = "Removes subtitles from videos."\n')
+    async with Client(create_server(about)) as client:
+        with_about = client.instructions
+    async with Client(create_server(make_repo(tmp_path / "plain"))) as client:
+        plain = client.instructions
+
+    assert with_about is not None and plain is not None
+    assert "This domain (demo): Removes subtitles from videos." in with_about
+    assert plain.endswith(INSTRUCTIONS)
 
 
 def test_guide_covers_every_spec_kind() -> None:
     from ico.spec.builders import _BUILDERS  # pyright: ignore[reportPrivateUsage]  # the kinds ICO can build
 
-    guide = (default_root() / "docs" / "agent-guide.md").read_text()
+    guide = (REPO / "src" / "ico_mcp" / "agent-guide.md").read_text()
     missing = [kind for kind in ["op", *_BUILDERS] if f"| `{kind}` |" not in guide]
     assert missing == []
 
 
 def test_readme_lists_every_tool() -> None:
-    readme = (default_root() / "README.md").read_text()
+    readme = (REPO / "README.md").read_text()
     assert [tool for tool in sorted(TOOLS) if f"`{tool}`" not in readme] == []
 
 

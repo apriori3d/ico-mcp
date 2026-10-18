@@ -82,6 +82,9 @@ class Config:
     timeouts: Timeouts = Timeouts()
     env: tuple[str, ...] = ()
     typecheck: TypecheckMode = "strict"
+    about: str = ""
+    """What the domain is about, in a few lines; added to the server
+    instructions (its workflow and conventions go to ``docs/domain.md``)."""
 
     @property
     def stable_dir(self) -> Path:
@@ -102,6 +105,20 @@ class Config:
     @property
     def runs_dir(self) -> Path:
         return self.root / "runs"
+
+    @property
+    def domain_notes(self) -> Path:
+        """The domain's part of the guide: workflow, conventions."""
+        return self.root / "docs" / "domain.md"
+
+
+def find_root(start: str | Path) -> Path | None:
+    """The nearest directory with an ``ico.toml``: ``start`` or a parent."""
+    start = Path(start).resolve()
+    for directory in (start, *start.parents):
+        if (directory / CONFIG_FILE).is_file():
+            return directory
+    return None
 
 
 def load_config(root: str | Path) -> Config:
@@ -130,6 +147,7 @@ def load_config(root: str | Path) -> Config:
     timeouts = _timeouts(table.table("timeouts")) if "timeouts" in data else Timeouts()
     env = _env(table.get("env", []))
     typecheck = table.choice("typecheck", get_args(TypecheckMode), "strict")
+    about = table.string("about", "") if "about" in data else ""
     table.reject_unknown()
 
     config = Config(
@@ -140,6 +158,7 @@ def load_config(root: str | Path) -> Config:
         timeouts=timeouts,
         env=env,
         typecheck=cast(TypecheckMode, typecheck),
+        about=about.strip(),
     )
     for directory in (config.stable_dir, config.draft_dir):
         if not (directory / "__init__.py").is_file():

@@ -449,7 +449,12 @@ shows every node on the plan (columns after Flow).
 ## 7. Saving and crystallizing
 
 - `save_pipeline(name, spec, description)` when the pipeline will be
-  reused; it must validate. `replace=true` to overwrite. Give `params`
+  reused; it must validate. `replace=true` to overwrite. The description
+  is what the next agent reads in `list_pipelines`: what the pipeline does,
+  its input and output, which pipeline comes before it and which after,
+  and when to prefer it over an alternative. Knowledge across pipelines
+  (the whole workflow, data locations, hardware) goes to the domain notes,
+  `docs/domain.md` in the domain repository, which `guide` serves below. Give `params`
   for its parameters without a default: they only validate it (saved as
   `check_params`, also used by the crystallize gate), never as run
   values.
@@ -464,8 +469,3 @@ shows every node on the plan (columns after Flow).
   until it returns the pull request or a failed stage. Proposals may go on
   meanwhile: the gate works on a copy. After the human merges and pulls,
   call `reload`.
-
-## 8. Domain notes
-
-This section belongs to the domain: data locations, formats, types to use,
-naming rules, typical pipelines.

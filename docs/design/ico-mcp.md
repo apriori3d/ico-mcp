@@ -13,10 +13,12 @@ Key principles (decided):
 
 - Operators are **not** MCP tools. The tool set is fixed; the agent sees
   operators only as compact cards returned by search.
-- **This repository is the template.** It contains the domain-agnostic
-  server and kernel plus empty domain packages. A domain MCP is a clone of
-  it: operators, pipelines and domain dependencies live in the clone, and
-  crystallization PRs go to the clone's own repository (may be private).
+- **This repository is the server; a domain is a repository of its own.**
+  The server and kernel are domain-agnostic and ship as the `ico-mcp`
+  package. A domain repository (`ico-mcp init`) holds operators, types,
+  pipelines, examples, notes for agents and the domain's dependencies, and
+  depends on `ico-mcp`; crystallization PRs go to its repository (may be
+  private). Server fixes reach a domain by a version bump.
 - JSON boundary, data by reference: inputs and outputs are JSON; images,
   videos and other large data are passed as paths or URIs, never as bytes
   through the agent's context. `run` is `ico.spec.run` from core.
@@ -60,45 +62,60 @@ environment are not passed to it unless listed in `ico.toml`.
 
 ## Repository layout
 
-The repository root is the domain root; cloning is the initialization.
+The server is this repository (the `ico-mcp` package); a domain is a
+repository of its own, created by `ico-mcp init <dir> [--package <pkg>]`
+(existing files are kept):
 
 ```
-ico-mcp/                     # clone → e.g. mydomain-mcp
-  src/ico_mcp/               # server and kernel (domain-agnostic)
-  domain/                    # stable operators and types (package)
+ico-mcp-video/               # a domain repository
+  video/                     # stable operators and types (package)
     __init__.py
-  domain_draft/              # drafts written by the agent (package)
+  video_draft/               # drafts written by the agent (package, committed)
     __init__.py
   pipelines/<name>.spec.json # saved, validated specs
   examples/<op>.json         # examples for JSON-io operators (<name>@<version>)
+  tests/test_domain_examples.py  # one line: ico_mcp.testing.example_tests
+  docs/domain.md             # the domain's part of the guide
   runs/YYYY-MM-DD.jsonl      # traces (gitignored)
   ico.toml
-  pyproject.toml             # a clone adds its domain dependencies here
+  pyproject.toml             # ico-mcp, ico and the domain's dependencies
+  .mcp.json                  # uv run --project <root> ico-mcp --root <root>
 ```
 
 `ico.toml` (minimal):
 
 ```toml
-name = "domain"
-package = "domain"             # stable package; drafts in domain_draft
-github = { repo = "owner/domain-mcp", base = "main" }
+name = "ico-mcp-video"
+package = "video"              # stable package; drafts in video_draft
+about = "Removes burned-in subtitles from marketplace videos."
+github = { repo = "owner/ico-mcp-video", base = "main" }
 timeouts = { run = 600, validate = 30, load = 60, wait = 45 }
 env = ["HF_HOME"]              # variables passed to the kernel
 typecheck = "strict"           # pyright mode for drafts
 ```
 
-One environment: the kernel is a separate process but runs with the same
-interpreter (`sys.executable`) and `.venv` as the server, so domain
-dependencies (e.g. torch, model libraries) are added to the clone's
-`pyproject.toml`.
+The server finds the domain by `--root`, else by the nearest `ico.toml`
+from its working directory up.
 
-**Specializing a clone:** rename `domain` / `domain_draft` and set `name`,
-`package` and `github` in `ico.toml`; the README documents these steps.
+One environment per domain: the server runs in the domain's environment
+(`uv run --project <domain>`), and the kernel is a separate process with
+the same interpreter (`sys.executable`), so the operators see the domain's
+dependencies (e.g. torch, model libraries). `pyproject.toml` takes
+`ico-mcp` and `ico` from editable checkouts when the server that ran
+`init` runs from one (development), else from their git repositories. One
+server process serves one domain: domains differ in environments and in
+the repositories their pull requests go to.
 
-**Trade-off:** server fixes do not reach clones automatically; a clone
-pulls them from the upstream template with git. Fine for one or two
-domains. With a second or third domain, the server moves into a package and
-the template into `copier` (see "Deferred").
+Knowledge for agents comes in three layers: the server instructions (with
+the domain's `about`), the `description` of each saved pipeline (what it
+does, its input, which pipeline comes before and after it), and
+`docs/domain.md`, served by `guide` after the general guide (shipped with
+the package): the workflow across pipelines, how to choose between
+alternatives, data locations, conventions, hardware.
+
+Drafts are committed in the domain repository, so work in progress is
+versioned; `crystallize` moves a draft module to the stable package in its
+branch, and the merge removes it from the draft package.
 
 **Status comes from location.** Operator source does not set `status`.
 Modules in `<pkg>_draft` load as `draft`, modules in `<pkg>` as `stable`.
@@ -215,9 +232,10 @@ Prepares a human review as a GitHub pull request:
    and pipelines are usually uncommitted there).
 3. Copy the modules of the refs (and the closure of their relative
    imports) from `<pkg>_draft` to `<pkg>`, unchanged, with the examples of
-   their operators and the given pipelines. Examples are the tests: the
-   template has one test, `tests/test_domain_examples.py`, that runs the
-   examples of every stable operator.
+   their operators and the given pipelines; the moved drafts leave the draft
+   package of the branch. Examples are the tests: a domain has one test,
+   `tests/test_domain_examples.py` (from `init`), that runs the examples of
+   every stable operator.
 4. Gate on the whole stable package: it loads, pyright strict, no import of
    the draft package, the examples pass, and `validate` of every saved
    pipeline. A failing gate pushes nothing and removes the branch.
@@ -359,8 +377,8 @@ token and time savings depend on it:
 - Domain tools published from saved pipelines.
 - Container isolation and enforced `caps`.
 - HTTP transport, multiple users.
-- Server as a package and the template as `copier`, so server fixes reach
-  clones by a version bump. Revisit with the second or third domain.
+- Publishing `ico-mcp` and `ico` to a package index (today: editable
+  checkouts or git dependencies).
 - Entry points for installed domain packages.
 - Resources in specs, context nodes (see ico `docs/design/spec.md`).
 - Runs that survive a server restart. Today a run lives in the server
