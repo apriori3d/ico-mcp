@@ -436,8 +436,11 @@ def create_server(
 
     @server.tool(annotations=WRITES)
     async def cancel_run(run_id: str) -> dict[str, JsonValue]:
-        """Stop a run by killing its kernel process (and its workers); a
-        finished run is left as is. Returns the run status."""
+        """Stop a run between items: the item in progress finishes, workers
+        stop cleanly, and the status has the outputs produced so far
+        (`result`, with `cancelled`) and `kernel_error` "cancelled". A run
+        that has not stopped within 10 s (one long item) is killed, without
+        a result. A finished run is left as is. Returns the run status."""
         with tool_errors():
             job = jobs.cancel(run_id)
         await job.finished.wait()

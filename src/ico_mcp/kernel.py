@@ -26,6 +26,7 @@ import hashlib
 import inspect
 import os
 import re
+import signal
 import sys
 import threading
 import traceback
@@ -40,6 +41,7 @@ from ico import (
     plan_view,
     validate_signatures,
 )
+from ico.core.runtime.cancel import IcoCancelToken
 from ico.core.signature_utils import format_ico_type
 from ico.registry import RegistryEntry, default_registry, load_operators
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
@@ -52,6 +54,7 @@ from ico_mcp.domain_types import DomainType, collect
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError, decode, encode
 from ico_mcp.type_names import TypeIndex
 
+CANCEL_REASON = "cancel_run"
 DEFAULT_SEARCH_LIMIT = 20
 TRACEBACK_LIMIT = 4000
 
@@ -74,6 +77,11 @@ class Kernel:
         self.config = config
         self.notify = notify
         self.request_id: JsonValue = None
+        self._cancel: IcoCancelToken | None = None
+        """The token of the run in progress, if any."""
+        self._cancel_requested = False
+        """A cancel came while no run was in progress (e.g. while loading):
+        the next run is cancelled before it starts."""
         self.types = TypeIndex((), "")
         self.domain_types: list[DomainType] = []
         self.domain_index = TypeIndex((), "")
@@ -269,6 +277,10 @@ class Kernel:
         spec = _spec(params)
         max_items = _positive_int(params, "max_items", DEFAULT_MAX_ITEMS)
         values = _values(params)
+        token = IcoCancelToken()
+        if self._cancel_requested:
+            token.cancel(CANCEL_REASON)
+        self._cancel = token
         self._send_plan(spec, values)
         progress = JsonProgressTool(self._progress(self.request_id))
         profiler = (
@@ -284,6 +296,7 @@ class Kernel:
                 tools=[progress],
                 params=values,
                 profiler=profiler,
+                cancel=token,
             )
         except SpecError as e:
             raise KernelError("spec_error", str(e), _spec_error(e)) from None
@@ -291,11 +304,22 @@ class Kernel:
             raise KernelError(
                 "run_error", f"{type(e).__name__}: {e}", _traceback(e)
             ) from None
+        finally:
+            self._cancel = None
         out = cast(JsonObject, result.to_dict())
         out["drafts"] = _draft_fingerprints(_required(params, "spec", dict))
         if profiler is not None:
             out["profile"] = cast(JsonObject, dict(profiler.snapshot()))
         return out
+
+    def cancel(self) -> None:
+        """Cancel the run in progress between items (called from the SIGTERM
+        handler, in the main thread); without one, the next run is
+        cancelled before it starts."""
+        if self._cancel is not None:
+            self._cancel.cancel(CANCEL_REASON)
+        else:
+            self._cancel_requested = True
 
     def _send_plan(
         self, spec: PipelineSpec | NodeSpec, values: JsonObject | None
@@ -526,6 +550,9 @@ def serve(root: Path, stdin: IO[str], stdout: IO[str]) -> None:
             stdout.flush()
 
     kernel = Kernel(load_config(root), write)
+    # cancel_run sends SIGTERM to this process (not to its workers): the run
+    # stops between items and returns what it produced.
+    signal.signal(signal.SIGTERM, lambda signum, frame: kernel.cancel())
     for line in stdin:
         if line.strip():
             write(kernel.handle(line))

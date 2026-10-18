@@ -178,6 +178,11 @@ Read `docs/design/ico-mcp.md` before any change: it holds the decisions.
     and its `stage`; the work goes on in the server and
     `wait_crystallize(crystallize_id)` returns its outcome. The drafts
     lock is held only until the drafts are copied into the worktree.
+25. [x] Cancel between items (needs apriori3d/ico#53): `cancel_run` sends
+    SIGTERM to the run's kernel, which cancels the run's `IcoCancelToken`;
+    the run stops between items and returns the outputs so far (with its
+    trace and profile) and `kernel_error` "cancelled"; a run that has not
+    stopped within `CANCEL_GRACE` (10 s) is killed as before.
 
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a

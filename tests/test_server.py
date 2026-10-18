@@ -15,6 +15,7 @@ import pytest
 from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
 
+from ico_mcp import jobs as jobs_module
 from ico_mcp.config import Config, Timeouts
 from ico_mcp.server import INSTRUCTIONS, create_server, default_root
 
@@ -412,8 +413,10 @@ async def test_run_without_waiting(
 
 
 async def test_main_kernel_is_free_while_a_run_hangs(
-    config: Config, tmp_path: Path
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # One long item does not stop between items: it is killed after the grace.
+    monkeypatch.setattr(jobs_module, "CANCEL_GRACE", 0.5)
     pid_file = tmp_path / "worker.pid"
     async with Client(create_server(config)) as client:
         started = await call(
@@ -437,6 +440,72 @@ async def test_main_kernel_is_free_while_a_run_hangs(
     assert await wait_dead(int(pid_file.read_text()))
     [trace] = traces(config)
     assert trace["error"]["code"] == "cancelled"
+    assert "result" not in cancelled
+
+
+def slow_spec(total: int) -> dict[str, Any]:
+    """``words@1`` then a stream of ``slow@1`` behind a progress node."""
+    body = {
+        "kind": "seq",
+        "children": [
+            {"kind": "progress", "name": "words", "params": {"total": total}},
+            {"kind": "op", "op": "slow@1"},
+        ],
+    }
+    return {
+        "kind": "seq",
+        "children": [op("words@1"), {"kind": "stream", "children": [body]}],
+    }
+
+
+async def test_cancel_returns_the_outputs_so_far(config: Config) -> None:
+    words = [f"w{i}" for i in range(200)]
+    async with Client(create_server(config)) as client:
+        started = await call(
+            client, "run", spec=slow_spec(200), input=" ".join(words), wait=False
+        )
+
+        async def advanced() -> bool:
+            status = await call(client, "run_status", run_id=started["run_id"])
+            return any(p["done"] >= 3 for p in status["progress"])
+
+        with anyio.fail_after(20):
+            while not await advanced():
+                await anyio.sleep(0.05)
+        clock = time.monotonic()
+        cancelled = await call(client, "cancel_run", run_id=started["run_id"])
+        elapsed = time.monotonic() - clock
+
+    assert elapsed < 5  # stopped between items, not killed after the grace
+    assert cancelled["state"] == "failed"
+    assert cancelled["kernel_error"]["code"] == "cancelled"
+    outputs = cancelled["result"]["outputs"]
+    assert 3 <= len(outputs) < len(words)
+    assert outputs == words[: len(outputs)]
+    assert cancelled["result"]["cancelled"] == "cancel_run"
+    assert "cancelled" in cancelled["summary"]
+    [trace] = traces(config)
+    assert trace["ok"] is False and trace["error"]["code"] == "cancelled"
+    assert trace["result"]["outputs"] == outputs[:10]  # traces keep ten
+
+
+async def test_cancel_while_the_kernel_starts(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        started = await call(client, "run", spec=op("shout@1"), input="x", wait=False)
+        cancelled = await call(client, "cancel_run", run_id=started["run_id"])
+
+    assert cancelled["state"] == "failed"
+    assert cancelled["kernel_error"]["code"] == "cancelled"
+
+
+async def test_cancel_of_a_finished_run_changes_nothing(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        started = await call(client, "run", spec=op("shout@1"), input="x", wait=False)
+        finished = await poll_until_finished(client, started["run_id"])
+        cancelled = await call(client, "cancel_run", run_id=started["run_id"])
+
+    assert finished["state"] == "done"
+    assert cancelled == finished
 
 
 async def test_failed_run_status_and_unknown_run(config: Config) -> None:

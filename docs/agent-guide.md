@@ -398,7 +398,9 @@ class VideoRef:
   stay below the client's tool-call timeout (about 60 s in the Claude
   app): a call that exceeds it makes the client restart the server, and
   the run is lost.
-  `cancel_run(run_id)` kills a run.
+  `cancel_run(run_id)` stops a run between items and returns its status
+  with the outputs produced so far (`result`, with `cancelled`); a run
+  stuck in one long item is killed after 10 s, without a result.
 - Give the human the dashboard URL; it shows every progress node and the
   plan of active and recent runs.
 
