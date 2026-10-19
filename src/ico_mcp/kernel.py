@@ -272,7 +272,7 @@ class Kernel:
     def environment(self, params: JsonObject) -> JsonValue:
         """Python, PATH, allowed variables, packages, duplicates and the
         binaries of ``bin:`` capabilities, as operators see them."""
-        match = _optional(params, "match", str)
+        match = _strings(params, "match") if "match" in params else None
         needed = [
             name
             for entry in default_registry

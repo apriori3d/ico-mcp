@@ -425,7 +425,7 @@ gets `profile`:
 {"elapsed": 2.1, "overhead": 0.13,
  "top": [{"key": "0.4.0.0.2", "label": "FetchCifarItem()", "self": "6.21s",
           "share": "66%", "count": "2000", "p95": "11µs",
-          "info": "startup 6.19s"}]}
+          "info": "first call 6.19s"}]}
 ```
 
 `top` lists the nodes with the largest self time, up to 5; the dashboard
@@ -434,11 +434,12 @@ shows every node on the plan (columns after Flow).
 - `self`: time of the node itself, without the nodes it calls. `share`: of
   all work, summed over threads and worker processes.
 - `p95`: a call or item in the steady state. The first call of each
-  operator instance and the first item of each iterator are `startup` in
-  `info`. A large startup is lazy setup (a model or a dataset loaded in
-  the first call, in every worker process): load it once, share it (e.g.
-  a dataset in shared memory created before the workers), or accept it
-  for long runs.
+  operator instance and the first item of each iterator are kept out of
+  it; `first call` in `info` shows them when they are far slower than the
+  steady state (their mean, `×N` for one per worker). A slow first call is
+  lazy setup (a model or a dataset loaded in the first call, in every
+  worker process): load it once, share it (e.g. a dataset in shared memory
+  created before the workers), or accept it for long runs.
 - `util N%` (async streams): how busy the pool was. Low: the input is the
   bottleneck, so more workers will not help. High: the workers are.
 - `transfer` (workers): time spent passing items to and from the worker

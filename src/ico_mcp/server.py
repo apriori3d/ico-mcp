@@ -146,7 +146,7 @@ def create_server(
     kernel = KernelClient(config)
     proposing = anyio.Lock()
     runs = BoardRuns()
-    board = LiveBoard(runs)
+    board = LiveBoard(runs, host=config.board.host, port=config.board.port)
     jobs = Jobs(config, runs, kernel)
     crystallizations = Crystallizations()
 
@@ -332,8 +332,8 @@ def create_server(
 
         `profile=true` measures the time of every node (about 4 µs per call
         or item): use it when a run is slow. The result's `profile.top` lists
-        the nodes with the largest self time, with `startup` (lazy setup in a
-        first call), `util` (pool utilization) and `transfer` (worker
+        the nodes with the largest self time, with `first call` (lazy setup:
+        a first call far slower than the others), `util` (pool utilization) and `transfer` (worker
         overhead) in `info`; the dashboard shows every node on the plan.
         """
         if (spec is None) == (pipeline is None):
@@ -345,6 +345,7 @@ def create_server(
                     }
                 )
             )
+        _check_input(input)
         if pipeline is not None:
             with tool_errors():
                 spec = _saved(config, pipeline)
@@ -673,15 +674,20 @@ def create_server(
         }
 
     @server.tool(annotations=READ_ONLY)
-    async def environment(match: str | None = None) -> dict[str, JsonValue]:
+    async def environment(
+        match: str | list[str] | None = None,
+    ) -> dict[str, JsonValue]:
         """What operators see: Python, PATH, allowed environment variables
-        (whether set, never values), timeouts, installed packages (`match`
-        filters by name), duplicates (a package installed by several
+        (whether set, never values), timeouts, installed packages (`match`:
+        a part of the name, or a list of parts, e.g. ["torch", "diffusers"];
+        not a pattern), duplicates (a package installed by several
         distributions, e.g. three OpenCV builds) and where the binaries of
         `bin:<name>` capabilities resolve."""
         request: JsonObject = {}
         if match is not None:
-            request["match"] = match
+            request["match"] = (
+                [match] if isinstance(match, str) else list[JsonValue](match)
+            )
         return await call("environment", request)
 
     @server.tool(annotations=READ_ONLY)
@@ -696,6 +702,22 @@ def create_server(
         return await server_report()
 
     return server
+
+
+def _check_input(value: JsonValue) -> None:
+    """Reject a string that is itself JSON-encoded (``"\"/data/a.mp4\""``):
+    the operator would get the quotes."""
+    if isinstance(value, str) and len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return
+        if isinstance(decoded, str):
+            message = (
+                "input is a JSON-encoded string; pass the string itself, "
+                f"without quotes: {decoded}"
+            )
+            raise ToolError(json.dumps({"code": "bad_request", "message": message}))
 
 
 def _edits(edits: list[ModuleEdit] | None) -> list[Edit] | None:

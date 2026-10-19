@@ -122,6 +122,9 @@ def test_invalid_toml(tmp_path: Path) -> None:
             "unknown keys: github.branch",
         ),
         (MINIMAL + 'typecheck = "off"\n', "typecheck: expected one of"),
+        (MINIMAL + "board = { port = 70000 }\n", "board.port: expected a port number"),
+        (MINIMAL + 'board = { port = "80" }\n', "board.port: expected a port number"),
+        (MINIMAL + "board = { ip = 1 }\n", "unknown keys: board.ip"),
         (MINIMAL + 'pakage = "x"\n', "unknown keys: pakage"),
     ],
 )
@@ -146,3 +149,14 @@ def test_draft_package_must_exist(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="domain_draft is not a package"):
         load_config(tmp_path)
+
+
+def test_board_address(tmp_path: Path) -> None:
+    make_repo(tmp_path, MINIMAL + 'board = { host = "0.0.0.0", port = 8765 }\n')
+    config = load_config(tmp_path)
+    assert (config.board.host, config.board.port) == ("0.0.0.0", 8765)
+    other = tmp_path / "other"
+    other.mkdir()
+    make_repo(other, MINIMAL)
+    default = load_config(other).board
+    assert (default.host, default.port) == ("127.0.0.1", 0)

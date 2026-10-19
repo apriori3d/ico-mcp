@@ -204,7 +204,7 @@ Findings of the first domain (numbers of
 the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
 `ico` roadmap (17-21). One PR each:
 
-28. [ ] Small fixes for remote use: a fixed `board = { host, port }` in
+28. [x] Small fixes for remote use: a fixed `board = { host, port }` in
     `ico.toml` (finding 5: the dashboard moves to a new port on every
     restart, so a LAN proxy breaks); `environment(match=[...])` as a list
     (finding 6); a JSON-quoted string `input` is decoded or rejected with

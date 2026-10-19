@@ -137,7 +137,7 @@ uv run --directory /abs/path/to/ico-mcp ico-mcp init /abs/path/to/ico-mcp-video 
 creates, without touching existing files:
 
 ```
-ico.toml              name, package, about, github, timeouts, env, typecheck
+ico.toml              name, package, about, github, timeouts, env, typecheck, board
 pyproject.toml        depends on ico-mcp and ico (editable checkouts when the
                       server runs from one, else their git repositories)
 video/ video_draft/   stable operators and types; drafts (committed too)
@@ -157,7 +157,10 @@ Then:
    `HF_HOME`), and `timeouts`. `timeouts.wait` (45 s) is the longest a tool
    call waits for a run or a crystallization: keep it below your client's
    tool-call timeout (about 60 s in the Claude app), which restarts the
-   server and loses its runs.
+   server and loses its runs. `board = { host = "0.0.0.0", port = 8765 }`
+   keeps the dashboard on one port across restarts and serves it to the
+   local network (default: `127.0.0.1`, a free port); its URL carries a
+   token.
 3. Write `docs/domain.md`: the workflow (which pipeline comes after which),
    how to choose between alternatives, data locations and formats, naming
    rules, hardware. The `guide` tool serves it after the general guide.
