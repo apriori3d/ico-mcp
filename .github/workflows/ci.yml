@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # A hanging test (e.g. leftover worker processes) fails the job instead
+    # of holding it for hours.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+    # ico is an editable path dependency on ../ico: check both out side by
+    # side. ico comes from its main branch, so a change that needs an
+    # unmerged ico PR passes here once that PR is merged.
+    - name: Checkout ico-mcp
+      uses: actions/checkout@v4
+      with:
+        path: ico-mcp
+
+    - name: Checkout ico
+      uses: actions/checkout@v4
+      with:
+        repository: apriori3d/ico
+        path: ico
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+        cache-dependency-glob: ico-mcp/uv.lock
+
+    - name: Install dependencies
+      working-directory: ico-mcp
+      run: uv sync
+
+    - name: Lint, type check and test (make ci)
+      working-directory: ico-mcp
+      run: make ci

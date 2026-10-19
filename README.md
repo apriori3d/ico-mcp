@@ -192,3 +192,7 @@ src/ico_mcp/
 
 The server process never imports operator code; only kernels do. Tests use
 local bare git repositories as remotes and a fake `gh` executable.
+
+CI (`.github/workflows/ci.yml`) runs `make ci` on Python 3.11 and 3.12 for
+pushes to `main` and pull requests, with `apriori3d/ico` checked out next
+to this repository from its `main`.
