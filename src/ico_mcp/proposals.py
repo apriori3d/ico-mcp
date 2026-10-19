@@ -445,8 +445,8 @@ async def _changes(
     now = {f"{c['name']}@{c['version']}": c for c in after}
     uses: dict[str, list[str]] = {}
     for pipeline in pipelines.names(config.pipelines_dir):
-        doc = pipelines.load(config.pipelines_dir, pipeline)
-        for ref in traces.op_refs(doc):
+        doc = _inlined(config, pipelines.load(config.pipelines_dir, pipeline))
+        for ref in traces.op_refs(doc):  # also inside the pipelines it uses
             uses.setdefault(ref, []).append(pipeline)
 
     changed: list[JsonValue] = []
@@ -475,7 +475,7 @@ async def _changes(
     checked: list[JsonValue] = []
     for pipeline in sorted(touched):
         doc = pipelines.load(config.pipelines_dir, pipeline)
-        request: JsonObject = {"spec": doc}
+        request: JsonObject = {"spec": _inlined(config, doc)}
         values = pipelines.check_params(doc)
         if values is not None:
             request["params"] = values
@@ -492,6 +492,15 @@ async def _changes(
         errors.extend(issues)
         checked.append({"name": pipeline, "ok": not issues, "issues": errors})
     return {"changed": changed, "removed": removed}, checked
+
+
+def _inlined(config: Config, doc: JsonObject) -> JsonObject:
+    """``doc`` with the pipelines it uses inlined (as is if that fails: its
+    validation reports why)."""
+    try:
+        return pipelines.inline(config.pipelines_dir, doc)
+    except KernelError:
+        return doc
 
 
 async def _request(

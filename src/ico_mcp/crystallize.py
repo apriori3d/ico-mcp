@@ -118,6 +118,8 @@ async def crystallize(
         for name in pipeline_names:
             if not pipelines.exists(config.pipelines_dir, name):
                 raise CrystallizeError("check", f"no saved pipeline {name!r}")
+        # The pipelines they use go with them, as relative imports do.
+        pipeline_names = pipelines.closure(config.pipelines_dir, pipeline_names)
 
         draft_package = config.draft_dir.name
         direct = sorted(
@@ -423,11 +425,13 @@ async def _gate_load_and_pipelines(config: Config) -> JsonObject:
         problems.extend(cast(list[JsonObject], stable["errors"]))
         for name in pipelines.names(config.pipelines_dir):
             doc = pipelines.load(config.pipelines_dir, name)
-            request: JsonObject = {"spec": doc}
             values = pipelines.check_params(doc)
-            if values is not None:
-                request["params"] = values
             try:
+                request: JsonObject = {
+                    "spec": pipelines.inline(config.pipelines_dir, doc)
+                }
+                if values is not None:
+                    request["params"] = values
                 checked = cast(JsonObject, await kernel.request("validate", request))
             except KernelError as e:
                 problems.append({"pipeline": name, **e.to_dict()})

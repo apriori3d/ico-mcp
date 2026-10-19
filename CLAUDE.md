@@ -216,7 +216,7 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     a node (a ring buffer, so an agent sees items that already passed),
     and a field-wise preview of dataclasses (scalars in full, arrays as
     shape and dtype) instead of a repr cut in the middle.
-31. [ ] `pipeline_ref` on the server side (finding 16, with ico item 21):
+31. [x] `pipeline_ref` on the server side (finding 16, with ico item 21):
     `save_pipeline` records the referenced pipelines; replacing or
     deleting one reports the pipelines that use it.
 

@@ -460,3 +460,35 @@ async def test_gate_validates_pipelines_with_their_check_params(repo: Config) ->
     )
     assert saved["check_params"] == {"width": 8}
     assert saved["root"]["params"] == {"width": {"$param": "width"}}
+
+
+async def test_used_pipelines_go_with_the_pipeline(repo: Config) -> None:
+    examples = [{"ref": "slugify@1", "input": "A B", "output": "a-b"}]
+    wrapped = {"kind": "pipeline_ref", "params": {"pipeline": "slug"}}
+    async with Client(create_server(repo)) as client:
+        await call(
+            client, "propose_operator", module="slug", code=SLUGIFY, examples=examples
+        )
+        await call(
+            client,
+            "save_pipeline",
+            name="slug",
+            spec={"kind": "op", "op": "slugify@1"},
+            description="",
+        )
+        await call(client, "save_pipeline", name="slugs", spec=wrapped, description="")
+        opened = await call(
+            client,
+            "crystallize",
+            refs=["slugify@1"],
+            title="Slugs",
+            summary="S.",
+            pipelines=["slugs"],
+        )
+
+    branch = opened["branch"]
+    assert json.loads(branch_file(repo, branch, "pipelines/slugs.spec.json"))
+    assert json.loads(
+        branch_file(repo, branch, "pipelines/slug.spec.json")
+    )  # taken along
+    assert all(step["ok"] for step in opened["gate"])
