@@ -212,7 +212,7 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     `startup` when it is not setup (finding 8).
 29. [x] `delete_module(module)` (finding 24): removes a draft module and
     reports the saved pipelines that use its operators, like `changes`.
-30. [ ] `sample_run`, second iteration (finding 21): the last N results of
+30. [x] `sample_run`, second iteration (finding 21): the last N results of
     a node (a ring buffer, so an agent sees items that already passed),
     and a field-wise preview of dataclasses (scalars in full, arrays as
     shape and dtype) instead of a repr cut in the middle.

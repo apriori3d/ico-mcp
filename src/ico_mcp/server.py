@@ -330,6 +330,7 @@ def create_server(
         max_items: int | None = None,
         wait: bool = True,
         profile: bool = False,
+        recent: bool = False,
     ) -> dict[str, JsonValue]:
         """Run a spec, or a saved pipeline by name, once on a JSON input;
         returns outputs and per-item errors.
@@ -345,6 +346,10 @@ def create_server(
         background: call `wait_run(run_id)` until it ends. With a progress
         token, the first progress node of the flow is reported. `dashboard` is the URL of the page with the
         progress of every node.
+
+        `recent=true` keeps about one preview per second of every
+        operator's results, so `sample_run` can show what already passed a
+        node (a clock read per call: use it for long runs).
 
         `profile=true` measures the time of every node (about 4 µs per call
         or item): use it when a run is slow. The result's `profile.top` lists
@@ -382,6 +387,7 @@ def create_server(
             pipeline=pipeline,
             values=params,
             profile=profile,
+            recent=recent,
         )
         if not wait:
             return {"run_id": job.id, "state": "running", "dashboard": board.url}
@@ -471,15 +477,19 @@ def create_server(
 
     @server.tool(annotations=READ_ONLY)
     async def sample_run(
-        run_id: str, node: str, count: int = 3
+        run_id: str, node: str, count: int = 3, wait: bool = True
     ) -> dict[str, JsonValue]:
         """Show what flows out of a node of a running run: the next `count`
         (1 to 20) results of `node`, a plan key ("0.1.2") or a label
         ("resize@1", or "resize" when one version is used), as short
-        previews (`type`, `preview`). A stream or source previews as an
-        iterator: sample the operator inside the stream. Waits at most
+        previews (`type`, `preview`; dataclasses field by field, arrays as
+        shape and dtype). A stream or source previews as an iterator:
+        sample the operator inside the stream. Waits at most
         `timeouts.wait`, or until the run ends (`complete` false: fewer
-        came). An unknown or ambiguous label lists the plan's nodes."""
+        came). `recent`: the last results that already passed the node,
+        for a run started with `recent=true` (about one per second per
+        node); `wait=false` returns them without waiting for new ones. An
+        unknown or ambiguous label lists the plan's nodes."""
         if not 1 <= count <= SAMPLE_MAX:
             raise ToolError(
                 json.dumps(
@@ -490,7 +500,7 @@ def create_server(
                 )
             )
         with tool_errors():
-            return await jobs.sample(run_id, node, count)
+            return await jobs.sample(run_id, node, count, wait)
 
     @server.tool(annotations=READ_ONLY)
     async def guide() -> str:

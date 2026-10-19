@@ -326,6 +326,7 @@ class Kernel:
                 params=values,
                 profiler=profiler,
                 cancel=token,
+                recent=bool(_optional(params, "recent", bool)),
             )
         except SpecError as e:
             raise KernelError("spec_error", str(e), _spec_error(e)) from None

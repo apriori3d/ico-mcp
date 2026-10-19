@@ -12,6 +12,7 @@ same on the board and in ``run_status``.
 
 from __future__ import annotations
 
+import collections
 import itertools
 import json
 import time
@@ -39,6 +40,8 @@ CANCELLED: JsonObject = {"code": "cancelled", "message": "the run was cancelled"
 CANCEL_GRACE = 10.0
 """Seconds a cancelled run has to stop between items before it is killed."""
 TITLE_MAX = 120
+RECENT = 3
+"""Recent previews kept per node (``run(recent=true)``)."""
 
 
 class SampleWait:
@@ -51,14 +54,18 @@ class SampleWait:
         self.label: str | None = None
         self.error: JsonObject | None = None
         self.samples: list[JsonObject] = []
+        self.started = anyio.Event()
+        """Set when the kernel resolved the request (or refused it)."""
         self.done = anyio.Event()
 
     def on_started(self, params: JsonObject) -> None:
+        self.started.set()
         node, label = params.get("node"), params.get("label")
         self.node = node if isinstance(node, str) else None
         self.label = label if isinstance(label, str) else None
 
     def on_error(self, params: JsonObject) -> None:
+        self.started.set()
         error = params.get("error")
         self.error = cast(JsonObject, error) if isinstance(error, dict) else {}
         self.done.set()
@@ -85,6 +92,8 @@ class Job:
         ``wait_run``); added and removed while the run goes."""
         self.samples: dict[int, SampleWait] = {}
         """``sample_run`` calls waiting, by their token."""
+        self.recent: dict[str, collections.deque[JsonObject]] = {}
+        """The last recent previews of each node (``run(recent=true)``)."""
 
     @property
     def id(self) -> str:
@@ -146,6 +155,7 @@ class Jobs:
         pipeline: str | None = None,
         values: JsonObject | None = None,
         profile: bool = False,
+        recent: bool = False,
     ) -> Job:
         """Start a run in a new kernel; it finishes in the background.
 
@@ -168,6 +178,8 @@ class Jobs:
             params["params"] = values
         if profile:
             params["profile"] = True
+        if recent:
+            params["recent"] = True
         if on_progress is not None:
             job.listeners.append(on_progress)
         self._tasks.start_soon(self._run, job, params, pipeline)
@@ -205,10 +217,14 @@ class Jobs:
             self._tasks.start_soon(self._kill_after_grace, job)
         return job
 
-    async def sample(self, run_id: str, node: str, count: int) -> JsonObject:
+    async def sample(
+        self, run_id: str, node: str, count: int, wait: bool = True
+    ) -> JsonObject:
         """The next ``count`` results of ``node`` (a plan key or a label) in
         a running run, as previews; waits at most ``timeouts.wait``, or
-        until the run ends, and returns the samples that came by then.
+        until the run ends, and returns the samples that came by then, with
+        the node's recent previews (``run(recent=true)``). Without
+        ``wait`` it returns once the node is resolved.
 
         Raises:
             KernelError: ``not_found`` (run or node), ``not_running`` (the
@@ -218,22 +234,26 @@ class Jobs:
         if job.finished.is_set():
             raise KernelError("not_running", f"run {run_id} has ended")
         token = next(self._sample_tokens)
-        wait = SampleWait(count)
-        job.samples[token] = wait
+        waiting = SampleWait(count)
+        job.samples[token] = waiting
         try:
             params: JsonObject = {"token": token, "node": node, "count": count}
             await job.kernel.send("sample", params)
             with anyio.move_on_after(self.config.timeouts.wait):
-                await wait.done.wait()
+                await (waiting.done if wait else waiting.started).wait()
         finally:
             del job.samples[token]
-        if wait.error is not None:
-            raise KernelError.from_dict(wait.error)
+        if waiting.error is not None:
+            raise KernelError.from_dict(waiting.error)
+        recent: list[JsonValue] = []
+        if waiting.node is not None:
+            recent.extend(job.recent.get(waiting.node, ()))
         return {
-            "node": wait.node,
-            "label": wait.label,
-            "samples": list[JsonValue](wait.samples),
-            "complete": len(wait.samples) == count,
+            "node": waiting.node,
+            "label": waiting.label,
+            "recent": recent,
+            "samples": list[JsonValue](waiting.samples),
+            "complete": len(waiting.samples) == count,
             "state": job.status()["state"],
         }
 
@@ -272,8 +292,14 @@ class Jobs:
                 elif wait is not None:
                     wait.on_error(body)
             elif method == "sample" and isinstance(body.get("sample"), dict):
-                for wait in list(job.samples.values()):
-                    wait.on_sample(cast(JsonObject, body["sample"]))
+                sample = cast(JsonObject, body["sample"])
+                if sample.get("recent"):
+                    node = str(sample.get("node"))
+                    kept = job.recent.setdefault(node, collections.deque(maxlen=RECENT))
+                    kept.append(sample)
+                else:
+                    for wait in list(job.samples.values()):
+                        wait.on_sample(sample)
 
         drafts: JsonValue = None
         profile: ProfileSnapshot | None = None
