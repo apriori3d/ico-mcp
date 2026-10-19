@@ -414,10 +414,14 @@ class VideoRef:
   the keys of the dashboard plan) or a label (`resize@1`, or `resize`
   when one version is used); an unknown or ambiguous label lists the
   plan's nodes. A stream or source previews as an iterator: sample the
-  operator inside the stream. Arrays show as shape and dtype. It waits at
-  most `timeouts.wait`; `complete: false` means fewer results came (a slow
-  node, or the run ended). `not_running`: the run has ended or not started
-  yet.
+  operator inside the stream. Arrays show as shape and dtype, dataclasses
+  field by field. It waits at most `timeouts.wait`; `complete: false`
+  means fewer results came (a slow node, or the run ended). `not_running`:
+  the run has ended or not started yet.
+  Results that already passed a node: start a long run with
+  `run(..., recent=true)` (about one preview per second of every
+  operator, a clock read per call); `sample_run` then returns the node's
+  last ones in `recent`, and `wait=false` returns them at once.
 - Give the human the dashboard URL; it shows every progress node and the
   plan of active and recent runs.
 

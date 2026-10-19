@@ -836,3 +836,53 @@ async def test_the_dashboard_listens_where_ico_toml_says(
         url = (await call(client, "dashboard"))["url"]
 
     assert url.startswith(f"http://127.0.0.1:{port}/?token=")
+
+
+async def test_sample_run_shows_recent_results_without_waiting(config: Config) -> None:
+    words = [f"w{i}" for i in range(200)]
+    async with Client(create_server(config)) as client:
+        started = await call(
+            client,
+            "run",
+            spec=slow_spec(200),
+            input=" ".join(words),
+            wait=False,
+            recent=True,
+        )
+        run_id = started["run_id"]
+        with anyio.fail_after(20):
+            while True:
+                status = await call(client, "run_status", run_id=run_id)
+                if any(p["done"] >= 30 for p in status["progress"]):
+                    break
+                await anyio.sleep(0.1)
+        clock = time.monotonic()
+        quick = await call(
+            client, "sample_run", run_id=run_id, node="slow@1", wait=False
+        )
+        elapsed = time.monotonic() - clock
+        plain = await call(
+            client, "run", spec=slow_spec(200), input=" ".join(words), wait=False
+        )
+        await wait_for_progress(client, plain["run_id"])
+        without = await call(
+            client, "sample_run", run_id=plain["run_id"], node="slow@1", wait=False
+        )
+        await call(client, "cancel_run", run_id=run_id)
+        await call(client, "cancel_run", run_id=plain["run_id"])
+
+    assert elapsed < 5
+    assert 1 <= len(quick["recent"]) <= 3
+    assert all(
+        r["recent"] and r["preview"].strip("'") in words for r in quick["recent"]
+    )
+    assert without["recent"] == []
+
+
+async def wait_for_progress(client: Client, run_id: str) -> None:
+    with anyio.fail_after(20):
+        while True:
+            status = await call(client, "run_status", run_id=run_id)
+            if any(p["done"] >= 2 for p in status["progress"]):
+                return
+            await anyio.sleep(0.05)
