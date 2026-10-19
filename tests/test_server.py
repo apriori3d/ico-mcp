@@ -808,3 +808,30 @@ async def test_profiled_run_summary_dashboard_and_trace(
     shout = next(n for n in profiled if n["label"] == "shout@1")
     assert shout["calls"] == 3 and shout["self"] >= 0
     assert set(shout) >= {"key", "total", "cpu", "p95", "startup", "utilization"}
+
+
+async def test_a_json_encoded_string_input_is_refused(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        quoted = await call_error(
+            client, "run", spec=op("shout@1"), input='"/data/a b"'
+        )
+        plain = await call(client, "run", spec=op("shout@1"), input='a "b"')
+
+    assert quoted["code"] == "bad_request"
+    assert "without quotes: /data/a b" in quoted["message"]
+    assert plain["outputs"] == ['A "B"']
+
+
+async def test_the_dashboard_listens_where_ico_toml_says(
+    make_repo: MakeRepo, tmp_path: Path
+) -> None:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    config = make_repo(tmp_path / "repo", f"board = {{ port = {port} }}\n")
+    async with Client(create_server(config)) as client:
+        url = (await call(client, "dashboard"))["url"]
+
+    assert url.startswith(f"http://127.0.0.1:{port}/?token=")

@@ -19,7 +19,7 @@ import os
 import platform
 import shutil
 import sys
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from importlib import metadata
 
 from ico_mcp.config import Config
@@ -68,7 +68,9 @@ def duplicates(
     return out
 
 
-def report(config: Config, needed_bins: Iterable[str], match: str | None) -> JsonObject:
+def report(
+    config: Config, needed_bins: Iterable[str], match: Sequence[str] | None
+) -> JsonObject:
     """The kernel's environment as reported by the ``environment`` tool.
 
     Variable values are never reported (they may be secrets), only whether
@@ -83,7 +85,7 @@ def report(config: Config, needed_bins: Iterable[str], match: str | None) -> Jso
     packages.extend(
         f"{name}=={version}"
         for name, version in sorted(versions.items(), key=lambda kv: kv[0].lower())
-        if match is None or match.lower() in name.lower()
+        if match is None or any(part.lower() in name.lower() for part in match)
     )
     env: list[JsonValue] = []
     env.extend({"name": name, "set": name in os.environ} for name in config.env)

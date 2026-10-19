@@ -39,6 +39,7 @@ async def test_environment_report(
     async with Client(create_server(config)) as client:
         report = await call(client, "environment")
         filtered = await call(client, "environment", match="ANYIO")
+        several = await call(client, "environment", match=["anyio", "pydantic"])
 
     assert report["python"]["version"].count(".") == 2
     assert report["path"] and all(isinstance(p, str) for p in report["path"])
@@ -50,6 +51,9 @@ async def test_environment_report(
     assert report["timeouts"] == {"run": 600, "validate": 30, "load": 60}
     assert any(p.startswith("anyio==") for p in report["packages"])
     assert [p.split("==")[0].lower() for p in filtered["packages"]] == ["anyio"]
+    names = {p.split("==")[0].lower() for p in several["packages"]}
+    assert {"anyio", "pydantic"} <= names
+    assert all("anyio" in n or "pydantic" in n for n in names)
     assert isinstance(report["duplicates"], list)
     assert report["bins"] == {
         "ico-test-missing-binary": None,

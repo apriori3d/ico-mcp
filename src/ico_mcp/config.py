@@ -61,6 +61,16 @@ class Timeouts:
 
 
 @dataclass(frozen=True, slots=True)
+class BoardConfig:
+    """Where the dashboard listens: ``127.0.0.1`` on a free port by
+    default; a fixed ``port`` survives server restarts (a LAN proxy keeps
+    working), ``host = "0.0.0.0"`` serves the local network."""
+
+    host: str = "127.0.0.1"
+    port: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Loaded ``ico.toml`` of a repository.
 
@@ -83,6 +93,7 @@ class Config:
     env: tuple[str, ...] = ()
     typecheck: TypecheckMode = "strict"
     about: str = ""
+    board: BoardConfig = BoardConfig()
     """What the domain is about, in a few lines; added to the server
     instructions (its workflow and conventions go to ``docs/domain.md``)."""
 
@@ -148,6 +159,7 @@ def load_config(root: str | Path) -> Config:
     env = _env(table.get("env", []))
     typecheck = table.choice("typecheck", get_args(TypecheckMode), "strict")
     about = table.string("about", "") if "about" in data else ""
+    board = _board(table.table("board")) if "board" in data else BoardConfig()
     table.reject_unknown()
 
     config = Config(
@@ -159,6 +171,7 @@ def load_config(root: str | Path) -> Config:
         env=env,
         typecheck=cast(TypecheckMode, typecheck),
         about=about.strip(),
+        board=board,
     )
     for directory in (config.stable_dir, config.draft_dir):
         if not (directory / "__init__.py").is_file():
@@ -177,6 +190,16 @@ def _github(table: _Table) -> GithubConfig:
     base = table.string("base", "main")
     table.reject_unknown()
     return GithubConfig(repo=repo, base=base)
+
+
+def _board(table: _Table) -> BoardConfig:
+    defaults = BoardConfig()
+    host = table.string("host", defaults.host)
+    port = table.get("port", defaults.port)
+    if type(port) is not int or not 0 <= port <= 65535:
+        raise _error(table.key("port"), "a port number (0 for a free one)", port)
+    table.reject_unknown()
+    return BoardConfig(host=host, port=port)
 
 
 def _timeouts(table: _Table) -> Timeouts:
