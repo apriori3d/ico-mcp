@@ -122,6 +122,7 @@ The server serves the domain repository given by `--root`, else the nearest
 | `dashboard` | the URL of the dashboard |
 | `guide` | the reference for agents (`docs/agent-guide.md`) |
 | `propose_operator` / `propose_types` | add or replace a draft module, in checked stages |
+| `delete_module` | remove a draft module; reports the saved pipelines that used it |
 | `save_pipeline` / `list_pipelines` / `get_pipeline` / `delete_pipeline` | saved, validated specs |
 | `crystallize` / `wait_crystallize` | a pull request that makes drafts stable; a long gate goes on in the background |
 | `reload` | restart the kernel after a merge or manual edits |

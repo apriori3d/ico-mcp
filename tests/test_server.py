@@ -48,6 +48,7 @@ TOOLS = {
     "wait_run",
     "wait_crystallize",
     "sample_run",
+    "delete_module",
 }
 
 

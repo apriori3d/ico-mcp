@@ -32,6 +32,7 @@ from ico_mcp.jobs import Jobs
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
 from ico_mcp.proposals import Edit, Example, ProposalError, propose
+from ico_mcp.proposals import delete_module as remove_module
 from ico_mcp.proposals import propose_types as stage_types
 from ico_mcp.protocol import JsonObject, KernelError
 from ico_mcp.version import DEFAULT_PACKAGES, ServerStatus
@@ -274,6 +275,21 @@ def create_server(
                     edits=_edits(edits),
                     check_types=typecheck,
                 )
+            except ProposalError as e:
+                raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
+
+    @server.tool(annotations=DELETES)
+    async def delete_module(module: str) -> dict[str, JsonValue]:
+        """Remove a draft module (operators or types) and the examples of
+        its operators, then reload. Reports the saved pipelines that used
+        its operators (`changes.removed`, each with its `pipelines`) and
+        validates them again (`pipelines`). Refused for a stable module and
+        for a module other drafts import (`imported_by`: change them first).
+        Use it when a refactoring moves operators to other modules: a new
+        module cannot register a name an old one still holds."""
+        async with proposing:
+            try:
+                return await remove_module(config, kernel, module)
             except ProposalError as e:
                 raise ToolError(json.dumps(e.to_dict(), ensure_ascii=False)) from None
 

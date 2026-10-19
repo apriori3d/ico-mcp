@@ -450,3 +450,50 @@ async def test_a_changed_operator_reports_its_broken_pipelines(config: Config) -
     assert checked["issues"]
     assert "new operator version" in renamed["hint"]
     assert gone["changes"]["removed"] == [{"ref": "pad@1", "pipelines": ["padded"]}]
+
+
+# ─── Deleting a draft module ───
+
+
+async def test_delete_module_reports_the_pipelines_it_breaks(config: Config) -> None:
+    examples = [{"ref": "slugify@1", "input": "A B", "output": "a-b"}]
+    spec = {"kind": "op", "op": "slugify@1"}
+    async with Client(create_server(config)) as client:
+        await propose(client, module="slug", code=SLUGIFY, examples=examples)
+        await tool(client, "save_pipeline", name="slugs", spec=spec, description="")
+        deleted = await tool(client, "delete_module", module="slug")
+        found = await tool(client, "search_operators", text="slugify")
+
+    assert deleted["module"] == "domain_draft.slug"
+    assert deleted["examples"] == ["examples/slugify@1.json"]
+    assert deleted["changes"]["removed"] == [
+        {"ref": "slugify@1", "pipelines": ["slugs"]}
+    ]
+    [checked] = deleted["pipelines"]
+    assert (checked["name"], checked["ok"]) == ("slugs", False)
+    assert "hint" in deleted
+    assert not (config.draft_dir / "slug.py").exists()
+    assert not (config.examples_dir / "slugify@1.json").exists()
+    assert found["cards"] == []
+
+
+async def test_delete_module_refuses_imported_stable_and_unknown(
+    config: Config,
+) -> None:
+    async with Client(create_server(config)) as client:
+        await tool(client, "propose_types", module="frames", code=FRAMES)
+        await propose(client, module="video", code=FRAME_OPS)
+        imported = await rejected(client, "delete_module", module="frames")
+        stable = await rejected(client, "delete_module", module="text")
+        unknown = await rejected(client, "delete_module", module="nope")
+        # Once nothing imports it, a types module goes too.
+        await tool(client, "delete_module", module="video")
+        types = await tool(client, "delete_module", module="frames")
+
+    assert imported["stage"] == "delete"
+    assert imported["diagnostics"] == [{"imported_by": ["video"]}]
+    assert "stable" in stable["message"]
+    assert "no draft module 'nope'" in unknown["message"]
+    assert "tools" in unknown["diagnostics"][0]["drafts"]
+    assert types["changes"] == {"changed": [], "removed": []}
+    assert not (config.draft_dir / "frames.py").exists()
