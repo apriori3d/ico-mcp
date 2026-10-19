@@ -340,6 +340,12 @@ Rules:
   occurring exactly once in the module (`get_operator` gives a draft's
   `module_source`); an empty `new` deletes. A failed edit changes
   nothing and names the edit.
+- **Refactoring across modules.** A new module cannot register an
+  operator name an old module still holds: move the operators, then
+  `delete_module(module)` removes the old draft (and the examples of its
+  operators) and reports the saved pipelines that used them, validated
+  again. It refuses a module other drafts still import (`imported_by`)
+  and stable modules (they leave by a pull request).
 
 **Examples** (`examples=[{"ref", "input", "output"}]`) are run as the
 spec `{"kind": "op", "op": ref}` on `input`, and must give exactly one

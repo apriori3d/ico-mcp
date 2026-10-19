@@ -23,7 +23,7 @@ from typing import Literal, cast
 
 from ico_mcp import pipelines, traces
 from ico_mcp.config import Config
-from ico_mcp.drafts import draft_imports
+from ico_mcp.drafts import draft_imports, module_names, relative_imports
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
 from ico_mcp.typecheck import TypecheckError, typecheck
@@ -41,7 +41,7 @@ NOT_FOR_EXAMPLES = (
     "pipeline run instead"
 )
 
-Stage = Literal["write", "typecheck", "load", "register", "examples", "types"]
+Stage = Literal["write", "typecheck", "load", "register", "examples", "types", "delete"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +229,68 @@ def module_code(
             )
         text = text.replace(edit.old, edit.new, 1)
     return text
+
+
+async def delete_module(
+    config: Config, kernel: KernelClient, module: str
+) -> JsonObject:
+    """Remove a draft module and the examples of its operators, reload, and
+    report the saved pipelines that used its operators (as ``changes`` of a
+    proposal, all removed), validated again.
+
+    Raises:
+        ProposalError: (stage ``delete``) the module is not a draft, or other
+            drafts import it (they are listed: change them first).
+    """
+    if not module.isidentifier():
+        raise ProposalError("delete", f"invalid module name {module!r}")
+    path = config.draft_dir / f"{module}.py"
+    if not path.is_file():
+        stable = (config.stable_dir / f"{module}.py").is_file()
+        message = (
+            f"{config.package}.{module} is stable: it leaves by a pull request"
+            if stable
+            else f"no draft module {module!r}"
+        )
+        drafts: list[JsonValue] = []
+        drafts.extend(module_names(config.draft_dir))
+        raise ProposalError("delete", message, [{"drafts": drafts}])
+    importers = sorted(
+        other
+        for other in module_names(config.draft_dir)
+        if other != module
+        and module in relative_imports((config.draft_dir / f"{other}.py").read_text())
+    )
+    if importers:
+        raise ProposalError(
+            "delete",
+            f"{module} is imported by other drafts; change them first",
+            [{"imported_by": list[JsonValue](importers)}],
+        )
+
+    before = await _module_cards(kernel, f"{config.draft_dir.name}.{module}")
+    path.unlink()
+    Path(importlib.util.cache_from_source(str(path))).unlink(missing_ok=True)
+    removed_examples: list[JsonValue] = []
+    for ref in sorted(before):
+        example = config.examples_dir / f"{ref}.json"
+        if example.is_file():
+            example.unlink()
+            removed_examples.append(str(example.relative_to(config.root)))
+    try:
+        await kernel.start()
+    except KernelError as e:
+        raise ProposalError("load", e.message, [e.to_dict()]) from None
+    changes, affected = await _changes(config, kernel, before, [])
+    result: JsonObject = {
+        "module": f"{config.draft_dir.name}.{module}",
+        "examples": removed_examples,
+        "changes": changes,
+        "pipelines": affected,
+    }
+    if any(not cast(JsonObject, p)["ok"] for p in affected):
+        result["hint"] = PIPELINES_HINT
+    return result
 
 
 def _check_name(config: Config, module: str) -> None:
