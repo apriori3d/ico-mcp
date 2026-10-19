@@ -171,9 +171,18 @@ def create_server(
     async def server_report() -> JsonObject:
         return status.report([tool.name for tool in await server.list_tools()])
 
-    async def check(doc: JsonObject) -> JsonObject:
+    def expand(
+        spec: JsonObject, overrides: dict[str, JsonObject] | None = None
+    ) -> JsonObject:
+        """``spec`` with the saved pipelines it refers to inlined."""
+        with tool_errors():
+            return pipelines.inline(config.pipelines_dir, spec, overrides)
+
+    async def check(
+        doc: JsonObject, overrides: dict[str, JsonObject] | None = None
+    ) -> JsonObject:
         """Validate a pipeline document with its ``check_params``."""
-        request: JsonObject = {"spec": doc}
+        request: JsonObject = {"spec": expand(doc, overrides)}
         values = pipelines.check_params(doc)
         if values is not None:
             request["params"] = values
@@ -313,9 +322,10 @@ def create_server(
 
         `params` gives values for the pipeline parameters (`{"$param": ...}`
         references) without a default; missing ones are reported. The
-        result also lists the parameters the spec declares.
+        result also lists the parameters the spec declares. `pipeline_ref`
+        nodes are inlined from the saved pipelines first.
         """
-        request: JsonObject = {"spec": spec}
+        request: JsonObject = {"spec": expand(cast(JsonObject, spec))}
         if params is not None:
             request["params"] = params
         return await call("validate", request)
@@ -371,6 +381,7 @@ def create_server(
             with tool_errors():
                 spec = _saved(config, pipeline)
         assert spec is not None
+        spec = expand(cast(JsonObject, spec))
         reporter = ProgressReporter()
 
         async def on_progress(snapshot: JsonObject) -> None:
@@ -529,14 +540,16 @@ def create_server(
         values for the parameters without a default: they are needed to
         validate the pipeline, saved as its `check_params` and never used as
         run values. An existing pipeline is overwritten only with
-        `replace=true`.
+        `replace=true`. `pipeline_ref` nodes use other saved pipelines
+        (`uses`); replacing a pipeline validates the pipelines that use it
+        again (`dependents`).
         """
         doc = pipelines.document(cast(JsonObject, spec), description, params)
         with tool_errors():
             existed = pipelines.exists(config.pipelines_dir, name)
             if existed and not replace:
                 raise pipelines.exists_error(name)
-        checked = await check(doc)
+        checked = await check(doc, {name: doc})
         issues = cast(list[JsonObject], checked["issues"])
         errors = [issue for issue in issues if issue.get("severity") == "error"]
         if errors:
@@ -552,12 +565,30 @@ def create_server(
             )
         with tool_errors():
             path = pipelines.save(config.pipelines_dir, name, doc, replace=replace)
-        return {
+        dependents: list[JsonValue] = []
+        for user in pipelines.users(config.pipelines_dir, name) if existed else []:
+            try:
+                report = await check(pipelines.load(config.pipelines_dir, user))
+                found = [
+                    i
+                    for i in cast(list[JsonObject], report["issues"])
+                    if i.get("severity") == "error"
+                ]
+            except ToolError as e:
+                found = [json.loads(str(e))]
+            user_issues: list[JsonValue] = []
+            user_issues.extend(found)
+            dependents.append({"name": user, "ok": not found, "issues": user_issues})
+        result: JsonObject = {
             "name": name,
             "path": str(path.relative_to(config.root)),
             "replaced": existed,
             "params": checked.get("params"),
+            "uses": list[JsonValue](pipelines.uses(doc)),
         }
+        if existed:
+            result["dependents"] = dependents
+        return result
 
     @server.tool(annotations=READ_ONLY)
     async def list_pipelines() -> dict[str, JsonValue]:
@@ -567,7 +598,11 @@ def create_server(
         items: list[JsonValue] = []
         for name in pipelines.names(directory):
             doc = pipelines.load(directory, name)
-            item: JsonObject = {"name": name, "description": pipelines.description(doc)}
+            item: JsonObject = {
+                "name": name,
+                "description": pipelines.description(doc),
+                "uses": list[JsonValue](pipelines.uses(doc)),
+            }
             try:
                 declared = (await check(doc)).get("params")
             except ToolError as e:  # e.g. an operator was removed
@@ -581,30 +616,45 @@ def create_server(
         return {"pipelines": items}
 
     @server.tool(annotations=READ_ONLY)
-    async def get_pipeline(name: str) -> dict[str, JsonValue]:
+    async def get_pipeline(name: str, inlined: bool = False) -> dict[str, JsonValue]:
         """A saved pipeline: its description, spec document, the parameters
-        it declares and the values that validate it (`check_params`)."""
+        it declares, the values that validate it (`check_params`), the
+        pipelines it uses and those that use it (`used_by`). `inlined=true`
+        gives the spec with the used pipelines inlined, as it runs."""
         with tool_errors():
             doc = pipelines.load(config.pipelines_dir, name)
+            used_by = pipelines.users(config.pipelines_dir, name)
         try:
             declared = (await check(doc)).get("params")
         except ToolError:
             declared = None
+        shown = expand(doc) if inlined else doc
         return {
             "name": name,
             "description": pipelines.description(doc),
-            "spec": {"version": doc.get("version"), "root": doc.get("root")},
+            "spec": {"version": shown.get("version"), "root": shown.get("root")},
             "params": declared,
             "check_params": pipelines.check_params(doc),
+            "uses": list[JsonValue](pipelines.uses(doc)),
+            "used_by": list[JsonValue](used_by),
         }
 
     @server.tool(annotations=DELETES)
     async def delete_pipeline(name: str) -> dict[str, JsonValue]:
         """Delete a saved pipeline (its file in the pipelines directory).
 
+        Refused while other pipelines use it (`used_by`: change them first).
         A pipeline already in a crystallization branch stays in that branch.
         """
         with tool_errors():
+            used_by = pipelines.users(config.pipelines_dir, name)
+            if used_by:
+                raise KernelError(
+                    "bad_request",
+                    f"pipeline {name!r} is used by {', '.join(used_by)}; "
+                    "change them first",
+                    {"used_by": list[JsonValue](used_by)},
+                )
             path = pipelines.delete(config.pipelines_dir, name)
         return {"name": name, "path": str(path.relative_to(config.root))}
 

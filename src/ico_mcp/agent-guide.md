@@ -122,6 +122,8 @@ Never `ref`, never a function name: only `op` with `name@version`.
 | `process` | 2 (body, until) | `max_iterations` (int), `on_limit` (`return` / `raise`) | apply the body until the predicate is true on its output |
 | `progress` | – | `total` (number; omit when unknown) | count the items passing by (dashboard, MCP progress) |
 | `identity` | – | – | pass items through |
+| `tap` | 1 | – | run the child for its side effect (files) and pass the **input** on: `I → I` |
+| `pipeline_ref` | – | `pipeline` (a saved pipeline's name), `bind` (its parameters) | the saved pipeline, inlined before the run |
 
 Any other `kind` fails with `Cannot build node of kind '…' yet`: there is
 no `map` / `foreach` / `par`; use `stream`, `async_stream` and `fork`.
@@ -157,6 +159,35 @@ given per run:
 - `validate(spec, params)` lists the parameters (`params` in the result,
   with types from the operator classes) and needs values for those
   without a default.
+
+### Pipelines from pipelines
+
+A pipeline that does what saved pipelines do refers to them instead of
+copying their specs, so a fix in one reaches every pipeline that uses it:
+
+```json
+{"kind": "seq", "children": [
+  {"kind": "op", "op": "load_video@1"},
+  {"kind": "tap", "children": [
+    {"kind": "pipeline_ref", "params": {"pipeline": "scan_text"}}]},
+  {"kind": "tap", "children": [
+    {"kind": "pipeline_ref", "params": {"pipeline": "refine_masks",
+                                        "bind": {"hold": 4}}}]},
+  {"kind": "pipeline_ref", "params": {"pipeline": "assemble_video"}}]}
+```
+
+- `bind` sets parameters of the used pipeline: a constant, or
+  `{"$param": "work_dir"}` for a parameter of the outer one. The
+  parameters it does not bind become parameters of the outer pipeline
+  under their own names (`validate` lists them).
+- `tap` runs a step for what it writes (masks, cleaned clips) and passes
+  its input on, so the next step gets the same video instead of a report:
+  no adapter operators between whole-video steps.
+- `save_pipeline` keeps the references (`uses`); replacing a used pipeline
+  validates its users again (`dependents`); `delete_pipeline` refuses a
+  pipeline others use (`used_by`); `get_pipeline(name, inlined=true)`
+  shows the spec as it runs; `crystallize` takes the used pipelines along.
+  Cycles are errors.
 
 ### Patterns
 
