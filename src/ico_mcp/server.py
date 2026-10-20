@@ -28,6 +28,7 @@ from ico_mcp import drafts, pipelines, scaffold
 from ico_mcp.config import Config, ConfigError, find_root, load_config
 from ico_mcp.crystallize import Crystallization, Crystallizations
 from ico_mcp.crystallize import crystallize as open_pull_request
+from ico_mcp.fetching import CONFIRM_BYTES, FETCH_SPEC, FETCHABLE, MAX_ITEMS
 from ico_mcp.jobs import Jobs
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
@@ -81,6 +82,11 @@ operators and types, runs); call it whenever these notes are not enough.
 7. If a tool named here or in the guide is missing from your tool list,
    call server_status: a server process older than its code is reported
    as stale, and the human has to reconnect the server.
+8. Model weights and other large files are assets (assets.toml), loaded
+   models are resources (see the guide). validate warns missing_asset with
+   the size; assets_status shows what is here. Tell the human what is
+   missing and how large; fetch_assets downloads only on their word
+   (confirm=true above 2 GB) and runs as a run (wait_run, cancel_run).
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -765,6 +771,105 @@ def create_server(
                 [match] if isinstance(match, str) else list[JsonValue](match)
             )
         return await call("environment", request)
+
+    async def asset_request(
+        ids: list[str] | None,
+        pipeline: str | None,
+        spec: dict[str, JsonValue] | None,
+        params: dict[str, JsonValue] | None,
+    ) -> JsonObject:
+        if pipeline is not None and spec is not None:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": "give pipeline or spec, not both",
+                    }
+                )
+            )
+        request: JsonObject = {}
+        if pipeline is not None:
+            with tool_errors():
+                spec = _saved(config, pipeline)
+        if spec is not None:
+            request["spec"] = expand(cast(JsonObject, spec))
+        if params is not None:
+            request["params"] = params
+        if ids:
+            request["ids"] = list[JsonValue](ids)
+        return await call("assets_status", request)
+
+    @server.tool(annotations=READ_ONLY)
+    async def assets_status(
+        ids: list[str] | None = None,
+        pipeline: str | None = None,
+        spec: dict[str, JsonValue] | None = None,
+        params: dict[str, JsonValue] | None = None,
+    ) -> dict[str, JsonValue]:
+        """The state of assets (pinned files in `assets.toml`: weights,
+        LoRAs, tables) on this machine: of the assets a saved `pipeline` or a
+        `spec` needs (with `params`), of `ids`, or of all. Each item has
+        `state` (present, missing, partial, wrong_size, unlocked, unknown),
+        `size` and `to_fetch` in bytes; `to_fetch` is the total."""
+        return await asset_request(ids, pipeline, spec, params)
+
+    @server.tool(annotations=WRITES)
+    async def fetch_assets(
+        ids: list[str] | None = None,
+        pipeline: str | None = None,
+        spec: dict[str, JsonValue] | None = None,
+        params: dict[str, JsonValue] | None = None,
+        confirm: bool = False,
+    ) -> dict[str, JsonValue]:
+        """Download missing assets (of `ids`, a `pipeline`, a `spec`, or
+        all) as a run: returns its `run_id` at once; follow it with
+        `wait_run`, stop it with `cancel_run` (a later fetch continues the
+        files). More than 2 GB to fetch needs `confirm=true`: first tell the
+        human what and how much (the call without `confirm` returns
+        `needs_confirmation` with the sizes), and fetch only on their word.
+        Unlocked or unknown assets are an error: they need `ico assets
+        lock` or an entry in `assets.toml` first."""
+        found = await asset_request(ids, pipeline, spec, params)
+        items = cast(list[JsonObject], found["items"])
+        if found.get("manifest") is None:
+            raise ToolError(
+                json.dumps(
+                    {"code": "no_manifest", "message": "the domain has no assets.toml"}
+                )
+            )
+        broken = [i for i in items if i["state"] in ("unknown", "unlocked")]
+        if broken:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "not_locked",
+                        "message": "not in assets.toml or not locked: "
+                        + ", ".join(f"{i['id']} ({i['state']})" for i in broken),
+                        "items": cast(JsonValue, broken),
+                    }
+                )
+            )
+        wanted = [cast(str, i["id"]) for i in items if i["state"] in FETCHABLE]
+        to_fetch = cast(int, found["to_fetch"])
+        if not wanted:
+            return {"state": "present", "items": cast(JsonValue, items)}
+        if to_fetch > CONFIRM_BYTES and not confirm:
+            return {
+                "state": "needs_confirmation",
+                "to_fetch": to_fetch,
+                "message": f"{to_fetch / 1e9:.1f} GB to download "
+                f"({', '.join(wanted)}): ask the human, then call again with "
+                "confirm=true",
+                "items": cast(JsonValue, items),
+            }
+        job = jobs.start(FETCH_SPEC, list[JsonValue](wanted), MAX_ITEMS)
+        return {
+            "run_id": job.id,
+            "state": "running",
+            "to_fetch": to_fetch,
+            "assets": list[JsonValue](wanted),
+            "dashboard": board.url,
+        }
 
     @server.tool(annotations=READ_ONLY)
     async def server_status() -> dict[str, JsonValue]:

@@ -316,7 +316,7 @@ async def test_a_long_crystallization_goes_on_in_the_background(
         )
 
     assert started["state"] == "running" and started["waited"] == 1
-    assert started["stage"] in {"git", "gate", "publish"}
+    assert started["stage"] in {"check", "git", "gate", "publish"}
     assert 0.9 <= elapsed < 10
     assert still["state"] == "running" and still["waited"] == 1  # cut to 1 s
     assert proposed_in < 10
@@ -342,9 +342,15 @@ async def test_a_background_failure_is_reported_by_wait_crystallize(
             client, "crystallize", refs=["slugify@1"], title="Slug", summary="s"
         )
         release.touch()
-        failed = await call_error(
-            client, "wait_crystallize", crystallize_id=started["crystallize_id"]
-        )
+        while True:  # the gate may take longer than one wait (timeouts.wait=1)
+            result = await client.call_tool(
+                "wait_crystallize", {"crystallize_id": started["crystallize_id"]}
+            )
+            if result.is_error:
+                message = text(result)
+                failed = cast(dict[str, Any], json.loads(message[message.index("{") :]))
+                break
+            assert cast(dict[str, Any], result.structured_content)["state"] == "running"
 
     assert started["state"] == "running"
     assert (failed["code"], failed["stage"]) == ("crystallize_failed", "publish")
@@ -492,3 +498,49 @@ async def test_used_pipelines_go_with_the_pipeline(repo: Config) -> None:
         branch_file(repo, branch, "pipelines/slug.spec.json")
     )  # taken along
     assert all(step["ok"] for step in opened["gate"])
+
+
+LOOKUP = '''
+from ico import IcoOperator
+from ico.assets import AssetId
+from ico.registry import register
+
+
+@register("lookup", 1, tags={"text"})
+class Lookup(IcoOperator[str, str]):
+    """Look a word up in a table."""
+
+    def __init__(self, table: AssetId = "words") -> None:
+        self.table = table
+        super().__init__(fn=self._apply)
+
+    def _apply(self, text: str) -> str:
+        return text
+'''
+WORDS_SHA = "a" * 64
+
+
+async def test_the_gate_needs_the_assets_in_the_manifest(repo: Config) -> None:
+    async with Client(create_server(repo)) as client:
+        await call(client, "propose_operator", module="lookup", code=LOOKUP)
+        failed = await call_error(
+            client, "crystallize", refs=["lookup@1"], title="Lookup", summary="L."
+        )
+        (repo.root / "assets.toml").write_text(
+            f'[assets.words]\nurl = "https://example.com/words.json"\nsha256 = "{WORDS_SHA}"\n'
+        )
+        (repo.root / "assets.lock").write_text(
+            'version = 1\n\n[[asset]]\nid = "words"\nkind = "file"\n'
+            f'files = [ {{ name = "words.json", size = 2500000000, sha256 = "{WORDS_SHA}" }} ]\n'
+        )
+        opened = await call(
+            client, "crystallize", refs=["lookup@1"], title="Lookup", summary="L."
+        )
+
+    steps = {step["step"]: step for step in failed["gate"]}
+    [problem] = steps["assets in the manifest"]["diagnostics"]
+    assert (problem["asset"], problem["state"]) == ("words", "no_manifest")
+    assert all(step["ok"] for step in opened["gate"])
+    assert "[assets.words]" in branch_file(repo, opened["branch"], "assets.toml")
+    body = (repo.root.parent / "pr-body.md").read_text()
+    assert "| `words` | 2.50 GB | `lookup@1` |" in body

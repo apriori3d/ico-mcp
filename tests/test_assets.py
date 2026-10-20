@@ -178,3 +178,117 @@ def test_ico_toml_blocks(make_repo: MakeRepo, tmp_path: Path) -> None:
         make_repo(tmp_path / "b", '[resources]\nram = "lots"\n')
     with pytest.raises(ConfigError, match="unknown keys: assets.path"):
         make_repo(tmp_path / "c", '[assets]\npath = "x"\n')
+
+
+# ─── Tools: assets_status, fetch_assets ───
+
+
+class Files:
+    """Plain files over HTTP on 127.0.0.1 (the source of url assets)."""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.files = files
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+            def do_HEAD(self) -> None:
+                self.reply(head=True)
+
+            def do_GET(self) -> None:
+                self.reply(head=False)
+
+            def reply(self, head: bool) -> None:
+                data = files[self.path.lstrip("/")]
+                self.send_response(200)
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                if not head:
+                    self.wfile.write(data)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+
+async def call(client: Any, tool: str, **arguments: Any) -> dict[str, Any]:
+    result = await client.call_tool(tool, arguments)
+    assert not result.is_error, result.content
+    return cast(dict[str, Any], result.structured_content)
+
+
+async def call_error(client: Any, tool: str, **arguments: Any) -> dict[str, Any]:
+    import json
+
+    result = await client.call_tool(tool, arguments)
+    assert result.is_error
+    message = "".join(getattr(c, "text", "") for c in result.content)
+    return cast(dict[str, Any], json.loads(message[message.index("{") :]))
+
+
+async def wait_done(client: Any, run_id: str) -> dict[str, Any]:
+    while True:
+        status = await call(client, "wait_run", run_id=run_id, timeout=5)
+        if status["state"] != "running":
+            return status
+
+
+async def test_fetch_assets_runs_as_a_job(domain: Config) -> None:
+    from mcp.client import Client
+
+    from ico_mcp.server import create_server
+
+    files = Files({"table.json": DATA})
+    manifest = domain.assets_manifest
+    manifest.write_text(manifest.read_text().replace("https://example.com", files.url))
+    async with Client(create_server(domain)) as client:
+        before = await call(client, "assets_status", spec=encode())
+        locked_only = await call_error(client, "fetch_assets")
+        started = await call(client, "fetch_assets", spec=encode())
+        finished = await wait_done(client, started["run_id"])
+        after = await call(client, "assets_status", ids=["table"])
+        again = await call(client, "fetch_assets", ids=["table"])
+    files.server.shutdown()
+
+    assert [(i["id"], i["state"]) for i in before["items"]] == [
+        ("encoder", "present"),
+        ("table", "missing"),
+    ]
+    assert before["to_fetch"] == len(DATA)
+    assert (
+        locked_only["code"] == "not_locked"
+        and "big (unlocked)" in locked_only["message"]
+    )
+    assert started["assets"] == ["table"] and started["state"] == "running"
+    assert finished["state"] == "done"
+    assert finished["title"] == "fetch assets"
+    outputs = finished["result"]["outputs"]
+    assert outputs[-2]["percent"] == 100
+    assert outputs[-1]["fetched"][0]["state"] == "present"
+    assert after["items"][0]["state"] == "present"
+    assert (domain.root / "store" / "table" / "table.json").read_bytes() == DATA
+    assert again["state"] == "present"
+
+
+async def test_a_large_fetch_needs_the_humans_word(domain: Config) -> None:
+    from mcp.client import Client
+
+    from ico_mcp.server import create_server
+
+    lock = domain.root / "assets.lock"
+    big = LOCK.replace(
+        f'id = "table"\nkind = "file"\nfiles = [ {{ name = "table.json", size = {len(DATA)}',
+        'id = "table"\nkind = "file"\nfiles = [ { name = "table.json", size = 3000000000',
+    )
+    lock.write_text(big)
+    async with Client(create_server(domain)) as client:
+        asked = await call(client, "fetch_assets", ids=["table"])
+        searched = await call(client, "search_operators", text="fetch")
+
+    assert asked["state"] == "needs_confirmation" and asked["to_fetch"] == 3 * 10**9
+    assert "ask the human" in asked["message"]
+    assert searched["cards"] == []  # the built-in fetch is not a domain operator

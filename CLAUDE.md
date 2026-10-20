@@ -230,7 +230,7 @@ its item 6; needs apriori3d/ico#75-#78):
     manifest beside `ico.toml`), `validate` warnings (`missing_asset`,
     `unknown_asset`, `no_assets_manifest`), assets in `get_operator` and
     `environment`, the guide.
-34. [ ] `assets_status` / `fetch_assets` as jobs (ask the human above a
+34. [x] `assets_status` / `fetch_assets` as jobs (ask the human above a
     few GB), instructions, crystallize gate (asset ids in the manifest and
     lock, assets with sizes in the PR).
 

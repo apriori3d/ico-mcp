@@ -122,6 +122,7 @@ class Kernel:
             "environment": self.environment,
             "modules": self.modules,
             "validate": self.validate,
+            "assets_status": self.assets_status,
             "run": self.run,
         }
 
@@ -161,6 +162,7 @@ class Kernel:
             status="draft",
             modules=_in_package(modules, self.config.draft_dir.name),
         )
+        assets.register_builtins()
         packages = {
             self.config.stable_dir.name: "stable",
             self.config.draft_dir.name: "draft",
@@ -192,6 +194,7 @@ class Kernel:
             tags=tags,
             text=text,
         )
+        entries = [e for e in entries if e.module != assets.BUILTIN_MODULE]
         cards: list[JsonValue] = []
         cards.extend(_card(entry) for entry in entries[:limit])
         return {"cards": cards, "total": len(entries)}
@@ -302,6 +305,16 @@ class Kernel:
             return {"issues": issues, "params": declared}
         issues.extend(_issue(issue) for issue in validate_signatures(flow))
         return {"issues": issues, "params": declared}
+
+    def assets_status(self, params: JsonObject) -> JsonValue:
+        """The state of the assets of ``spec`` (with ``params``), of
+        ``ids``, or of all; and the bytes to fetch."""
+        spec = _spec(params) if "spec" in params else None
+        ids = _strings(params, "ids") if "ids" in params else None
+        try:
+            return assets.assets_status(spec, _values(params), ids)
+        except SpecError as e:
+            raise KernelError("spec_error", str(e), _spec_error(e)) from None
 
     def run(self, params: JsonObject) -> JsonValue:
         spec = _spec(params)
