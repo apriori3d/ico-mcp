@@ -26,6 +26,11 @@ ErrorCode = Literal[
     "timeout",  # the request timed out; the kernel was killed
     "crashed",  # the kernel exited
     "not_running",  # the run asked for (samples) is not in progress
+    "cancelled",  # a remote run was cancelled
+    "load_error",  # a remote job's operator modules failed to import
+    "busy",  # a remote job's work directory is held by another runner
+    "storage_error",  # uploading inputs or downloading outputs of a remote run
+    "remote_error",  # the target failed (HTTP, a job without a result)
 ]
 ERROR_CODES: tuple[ErrorCode, ...] = get_args(ErrorCode)
 

@@ -29,9 +29,10 @@ from ico.tools.board.runs import ProgressSnapshot
 from ico.tools.profiler import ProfileSnapshot
 
 from ico_mcp import profiles, traces
-from ico_mcp.config import Config
+from ico_mcp.config import Config, TargetConfig
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
+from ico_mcp.sources import job_code
 
 OnProgress = Callable[[JsonObject], Awaitable[None]]
 """Receives every progress snapshot of a run (e.g. for MCP progress)."""
@@ -156,18 +157,25 @@ class Jobs:
         values: JsonObject | None = None,
         profile: bool = False,
         recent: bool = False,
+        target: TargetConfig | None = None,
     ) -> Job:
         """Start a run in a new kernel; it finishes in the background.
 
         ``pipeline`` names a saved pipeline run by name; ``values`` are the
         values of the pipeline parameters; ``profile`` measures every node
-        (the dashboard shows it on the plan, the result has a summary).
+        (the dashboard shows it on the plan, the result has a summary);
+        ``target`` sends the run to a remote target: its kernel loads no
+        operators, carries the code of the modules the spec uses (and the
+        assets manifest) in the job, and bridges the job's events.
         """
         if self._tasks is None:
             raise RuntimeError("Jobs is not entered")
+        title = _title(spec, pipeline, values)
         job = Job(
-            KernelClient(self.config),
-            self.runs.start(_title(spec, pipeline, values)),
+            KernelClient(self.config, remote=target is not None),
+            self.runs.start(
+                f"{title} @ {target.name}" if target is not None else title
+            ),
         )
         self._forget_evicted()
         self._jobs[job.id] = job
@@ -182,7 +190,7 @@ class Jobs:
             params["recent"] = True
         if on_progress is not None:
             job.listeners.append(on_progress)
-        self._tasks.start_soon(self._run, job, params, pipeline)
+        self._tasks.start_soon(self._run, job, params, pipeline, target)
         return job
 
     def get(self, run_id: str) -> Job:
@@ -268,6 +276,7 @@ class Jobs:
         job: Job,
         params: JsonObject,
         pipeline: str | None,
+        target: TargetConfig | None = None,
     ) -> None:
         started, clock = datetime.now(UTC), time.monotonic()
 
@@ -303,7 +312,25 @@ class Jobs:
 
         drafts: JsonValue = None
         profile: ProfileSnapshot | None = None
-        job.kernel.modules = await self._modules(cast(JsonObject, params["spec"]))
+        modules = await self._modules(cast(JsonObject, params["spec"]))
+        if target is None:
+            job.kernel.modules = modules
+        else:
+            sources, packages = job_code(self.config, modules)
+            params = {
+                **params,
+                "run_id": job.id,
+                "sources": sources,
+                "packages": packages,
+                "target": {
+                    "name": target.name,
+                    "provider": target.provider,
+                    "endpoint": target.endpoint,
+                    "storage": target.storage,
+                    "execution_timeout": target.execution_timeout,
+                },
+            }
+            job.kernel.modules = []  # the code goes to the target
         async with job.kernel:
             try:
                 await job.kernel.start()

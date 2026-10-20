@@ -68,7 +68,7 @@ from ico.tools.profiler import ProfilerTool, ProfileSnapshot
 from ico.tools.profiler.instrument import label
 from ico.tools.sample import JsonSampleTool, SampleSnapshot
 
-from ico_mcp import assets, environment
+from ico_mcp import assets, environment, remote
 from ico_mcp.config import Config, load_config
 from ico_mcp.domain_types import DomainType, collect
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError, decode, encode
@@ -317,6 +317,8 @@ class Kernel:
             raise KernelError("spec_error", str(e), _spec_error(e)) from None
 
     def run(self, params: JsonObject) -> JsonValue:
+        if "target" in params:
+            return self._run_remote(params)
         spec = _spec(params)
         max_items = _positive_int(params, "max_items", DEFAULT_MAX_ITEMS)
         values = _values(params)
@@ -359,6 +361,25 @@ class Kernel:
         if profiler is not None:
             out["profile"] = cast(JsonObject, dict(profiler.snapshot()))
         return out
+
+    def _run_remote(self, params: JsonObject) -> JsonValue:
+        """A run on a remote target (see :mod:`ico_mcp.remote`)."""
+        token = IcoCancelToken()
+        if self._cancel_requested:
+            token.cancel(CANCEL_REASON)
+        self._cancel = token
+        self._run_request = self.request_id
+        request = self.request_id
+
+        def notify(method: str, body: JsonObject) -> None:
+            self.notify({"method": method, "params": {"request": request, **body}})
+
+        try:
+            if token.cancelled:
+                raise KernelError("cancelled", "the run was cancelled")
+            return remote.run_remote(params, self.config.runs_dir, notify, token)
+        finally:
+            self._cancel = None
 
     def cancel(self) -> None:
         """Cancel the run in progress between items (called from the SIGTERM

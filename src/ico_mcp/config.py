@@ -91,6 +91,20 @@ class ResourcesConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TargetConfig:
+    """Where ``run(target=...)`` sends a run: a RunPod Serverless endpoint
+    and the storage of its inputs and outputs (``s3://bucket/prefix``).
+    Keys are environment variables of the server (``RUNPOD_API_KEY``,
+    ``AWS_*``), given only to the kernels of remote runs."""
+
+    name: str
+    endpoint: str
+    storage: str
+    provider: Literal["runpod"] = "runpod"
+    execution_timeout: float = 10800
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Loaded ``ico.toml`` of a repository.
 
@@ -116,6 +130,7 @@ class Config:
     board: BoardConfig = BoardConfig()
     assets: AssetsConfig = AssetsConfig()
     resources: ResourcesConfig = ResourcesConfig()
+    targets: tuple[TargetConfig, ...] = ()
     """What the domain is about, in a few lines; added to the server
     instructions (its workflow and conventions go to ``docs/domain.md``)."""
 
@@ -195,6 +210,7 @@ def load_config(root: str | Path) -> Config:
         if "resources" in data
         else ResourcesConfig()
     )
+    targets = _targets(table.table("targets")) if "targets" in data else ()
     table.reject_unknown()
 
     config = Config(
@@ -209,6 +225,7 @@ def load_config(root: str | Path) -> Config:
         board=board,
         assets=assets,
         resources=resources,
+        targets=targets,
     )
     for directory in (config.stable_dir, config.draft_dir):
         if not (directory / "__init__.py").is_file():
@@ -259,6 +276,28 @@ def _resources(table: _Table) -> ResourcesConfig:
         budgets[key] = value or None
     table.reject_unknown()
     return ResourcesConfig(ram=budgets["ram"], gpu=budgets["gpu"])
+
+
+def _targets(table: _Table) -> tuple[TargetConfig, ...]:
+    found: list[TargetConfig] = []
+    for name in sorted(table.data):
+        target = table.table(name)
+        provider = target.choice("provider", ("runpod",), "runpod")
+        storage = target.string("storage")
+        if not storage.startswith(("s3://", "file://")):
+            raise _error(target.key("storage"), "an s3:// (or file://) URI", storage)
+        found.append(
+            TargetConfig(
+                name=name,
+                provider=cast(Literal["runpod"], provider),
+                endpoint=target.string("endpoint"),
+                storage=storage.rstrip("/"),
+                execution_timeout=target.positive("execution_timeout", 10800),
+            )
+        )
+        target.reject_unknown()
+    table.reject_unknown()
+    return tuple(found)
 
 
 def _timeouts(table: _Table) -> Timeouts:

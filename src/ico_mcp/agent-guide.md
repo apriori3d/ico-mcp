@@ -503,6 +503,17 @@ class VideoRef:
   last ones in `recent`, and `wait=false` returns them at once.
 - Give the human the dashboard URL; it shows every progress node and the
   plan of active and recent runs.
+- **On a cloud GPU**: `run(..., target="default")` with a target of
+  `ico.toml` `[targets]`. The code of the operators the pipeline uses
+  goes with the run (drafts too: no image rebuild), local files in
+  `input` / `params` are uploaded (up to 5 GB), and the outputs come back
+  as local paths under `runs/<run_id>/out/`. Write outputs under `$JOB`
+  (`params={"out_dir": "$JOB/out"}`): that directory is what returns. It
+  is followed as any run (`wait_run`, dashboard, `cancel_run`), with two
+  differences: `sample_run` has only `recent=true` previews, and a
+  cancel loses the outputs so far. First run a small input locally; a
+  remote run costs GPU time from the worker's start (model loading
+  included).
 
 ### Profiling a slow run
 
