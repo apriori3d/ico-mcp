@@ -414,9 +414,15 @@ UMT5 = Umt5()
   operator using an equal resource. No class attributes as caches.
 - `validate` reports assets that are not here (`missing_asset`, with the
   size) and ids that are not in `assets.toml` (`unknown_asset`, an
-  error); `get_operator` and `environment` show their state. Never
-  download weights yourself: tell the human what is missing and how large
-  it is; fetching tens of GB is their decision (`ico assets fetch <id>`).
+  error); `get_operator`, `environment` and `assets_status` show their
+  state. Never download weights yourself: tell the human what is missing
+  and how large it is; fetching tens of GB is their decision.
+  `fetch_assets(ids | pipeline | spec)` downloads as a run (`wait_run`,
+  `cancel_run`; a later fetch continues the files); above 2 GB it returns
+  `needs_confirmation` with the sizes until called with `confirm=true`.
+  Unlocked assets need `ico assets lock` by the human first.
+- `crystallize` takes `assets.toml` and `assets.lock` along, and its gate
+  fails when a moved operator uses an asset that is not in both.
 - A run's profile has a row per resource: uses, time in use, loads and
   moves with their time, and `reloads` (the RAM budget is too small).
 

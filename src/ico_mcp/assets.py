@@ -10,19 +10,32 @@ ICO's registry).
 - :func:`report`: the ``assets`` and ``resources`` blocks of
   ``environment``.
 
-Nothing here downloads: fetching is the human's decision.
+- :class:`FetchAssets`: the built-in operator that ``fetch_assets`` runs
+  as a job (a run like any other: dashboard, ``wait_run``, ``cancel_run``,
+  trace); it yields one item per percent of the bytes to fetch.
+
+Only ``FetchAssets`` downloads, and only when the human asked for it.
 """
 
 from __future__ import annotations
 
+import queue
 import shutil
+import threading
+from collections.abc import Iterator
+from typing import cast
 
+from ico import IcoOperator
 from ico.assets import AssetMissing, Assets
-from ico.assets.fetch import Status, status
+from ico.assets.fetch import Status, fetch, status
+from ico.core.length import with_length
+from ico.registry import default_registry
+from ico.registry.registry import OperatorMeta
 from ico.resources import pool
 from ico.spec import NodeSpec, PipelineSpec, SpecError, spec_assets
 from ico.spec.model import JsonValue
 
+from ico_mcp.fetching import FETCH_REF
 from ico_mcp.protocol import JsonObject
 
 
@@ -151,4 +164,113 @@ def _gb(size: int) -> str:
     return f"{size / 1e9:.2f} GB"
 
 
-__all__ = ["issues", "operator_assets", "report"]
+def assets_status(
+    spec: PipelineSpec | NodeSpec | None,
+    values: JsonObject | None,
+    ids: list[str] | None,
+) -> JsonObject:
+    """The state of the assets a spec needs (or of ``ids``; all when both
+    are missing), and the bytes to fetch."""
+    store = _store()
+    if store is None:
+        return {"manifest": None, "items": [], "to_fetch": 0}
+    if spec is not None:
+        wanted = spec_assets(spec, values)
+    else:
+        wanted = ids if ids else sorted(store.manifest.assets)
+    states = _states(store, wanted)
+    items: list[JsonValue] = []
+    items.extend(_status(id, s) for id, s in states)
+    to_fetch = sum(s.to_fetch for _, s in states if s is not None)
+    return {"manifest": str(store.manifest.path), "items": items, "to_fetch": to_fetch}
+
+
+# ─── The fetch job ───
+
+TICKS = 100
+
+
+class _Stopped(Exception):
+    pass
+
+
+class FetchAssets(IcoOperator[list[str], Iterator[JsonObject]]):
+    """Download assets (as ``ico assets fetch``): one item per percent of
+    the bytes to fetch, then a summary with the state of each asset. A
+    cancelled fetch stops in the middle of a file; the part on disk is
+    continued by the next fetch."""
+
+    def __init__(self) -> None:
+        super().__init__(fn=self._apply)
+
+    def _apply(self, ids: list[str]) -> Iterator[JsonObject]:
+        store = Assets.from_env()
+        total = sum(s.to_fetch for s in status(store, ids))
+        return with_length(self._ticks(store, ids, total), TICKS + 1 if total else 1)
+
+    def _ticks(self, store: Assets, ids: list[str], total: int) -> Iterator[JsonObject]:
+        events: queue.Queue[tuple[str, object]] = queue.Queue()
+        stop = threading.Event()
+        done: dict[str, int] = {}
+        shown = 0
+
+        def progress(id: str, got: int, size: int) -> None:
+            if stop.is_set():
+                raise _Stopped
+            done[id] = got
+            events.put(("tick", id))
+
+        def work() -> None:
+            try:
+                events.put(("done", fetch(store, ids, progress=progress)))
+            except BaseException as e:  # reported to the run as its error
+                events.put(("error", e))
+
+        thread = threading.Thread(target=work, name="ico-fetch-assets", daemon=True)
+        thread.start()
+        try:
+            while True:
+                kind, value = events.get()
+                if kind == "tick":
+                    id = cast(str, value)
+                    percent = sum(done.values()) * TICKS // max(total, 1)
+                    while shown < min(percent, TICKS):
+                        shown += 1
+                        yield {"percent": shown, "asset": id}
+                elif kind == "done":
+                    while shown < TICKS and total:
+                        shown += 1
+                        yield {"percent": shown}
+                    after = cast(list[Status], value)
+                    items: list[JsonValue] = []
+                    items.extend(_status(s.id, s) for s in after)
+                    yield {"fetched": items}
+                    return
+                else:
+                    raise cast(BaseException, value)
+        finally:
+            stop.set()
+
+
+BUILTIN_MODULE = __name__
+
+
+def register_builtins() -> None:
+    """Register :class:`FetchAssets` (again after a reload)."""
+    default_registry.add_class(
+        FetchAssets,
+        OperatorMeta(name=FETCH_REF.split("@")[0], version=1, tags=frozenset({"system"}),
+                     status="stable"),
+        replace=True,
+    )  # fmt: skip
+
+
+__all__ = [
+    "BUILTIN_MODULE",
+    "FetchAssets",
+    "assets_status",
+    "issues",
+    "operator_assets",
+    "register_builtins",
+    "report",
+]

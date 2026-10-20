@@ -150,7 +150,7 @@ async def crystallize(
                 drafts_lock.release()
                 locked = False
                 on_stage("gate")
-                gate = await _gate(load_config(tree))
+                gate = await _gate(load_config(tree), module_refs)
                 if not all(step["ok"] for step in gate):
                     raise CrystallizeError(
                         "gate",
@@ -392,19 +392,55 @@ def _copy(
     for name in pipeline_names:
         source = config.pipelines_dir / f"{name}.spec.json"
         shutil.copy2(source, target.pipelines_dir / source.name)
+    # The manifest goes with the operators that use its assets.
+    for manifest in (
+        config.assets_manifest,
+        config.assets_manifest.with_name("assets.lock"),
+    ):
+        if manifest.is_file():
+            shutil.copy2(manifest, tree / manifest.name)
 
 
 # ─── Gate ───
 
 
-async def _gate(config: Config) -> list[JsonObject]:
+async def _gate(config: Config, refs: Sequence[str]) -> list[JsonObject]:
     """Run every gate step on the worktree; each is ``{step, ok, diagnostics}``."""
+    loaded, assets = await _gate_load_and_pipelines(config, refs)
     return [
-        await _gate_load_and_pipelines(config),
+        loaded,
         await _gate_typecheck(config),
         _gate_no_draft_imports(config),
         await _gate_examples(config),
+        assets,
     ]
+
+
+async def _gate_assets(kernel: KernelClient, refs: Sequence[str]) -> JsonObject:
+    """Every asset the moved operators use (their asset params and the
+    fields of their resources) is in ``assets.toml`` and ``assets.lock``.
+    The files are not needed. The step keeps ``assets`` (id, size, used
+    by) for the pull request."""
+    problems: list[JsonObject] = []
+    used: dict[str, JsonObject] = {}
+    for ref in refs:
+        card = cast(JsonObject, await kernel.request("card", {"ref": ref}))
+        for item in cast(list[JsonObject], card.get("assets", [])):
+            id, state = str(item["id"]), item.get("state")
+            if state in ("unknown", "unlocked", "no_manifest"):
+                problems.append(
+                    {"ref": ref, "asset": id, "state": state,
+                     "message": f"{ref} uses asset {id!r}, {state}: add it to "
+                     "assets.toml and run `ico assets lock`"}
+                )  # fmt: skip
+                continue
+            entry = used.setdefault(
+                id, {"id": id, "size": item.get("size"), "used_by": []}
+            )
+            cast(list[JsonValue], entry["used_by"]).append(ref)
+    step = _step("assets in the manifest", problems)
+    step["assets"] = list[JsonValue](used[id] for id in sorted(used))
+    return step
 
 
 def _step(step: str, diagnostics: list[JsonObject]) -> JsonObject:
@@ -413,14 +449,18 @@ def _step(step: str, diagnostics: list[JsonObject]) -> JsonObject:
     return {"step": step, "ok": not diagnostics, "diagnostics": out}
 
 
-async def _gate_load_and_pipelines(config: Config) -> JsonObject:
-    """The stable package loads and every saved pipeline validates."""
+async def _gate_load_and_pipelines(
+    config: Config, refs: Sequence[str]
+) -> tuple[JsonObject, JsonObject]:
+    """The stable package loads and every saved pipeline validates; and the
+    assets step (:func:`_gate_assets`), in the same kernel."""
     problems: list[JsonObject] = []
     async with KernelClient(config) as kernel:
         try:
             report = cast(JsonObject, await kernel.start())
         except KernelError as e:
-            return _step("load and validate pipelines", [e.to_dict()])
+            failed = _step("load and validate pipelines", [e.to_dict()])
+            return failed, _step("assets in the manifest", [e.to_dict()])
         stable = cast(JsonObject, report["stable"])
         problems.extend(cast(list[JsonObject], stable["errors"]))
         for name in pipelines.names(config.pipelines_dir):
@@ -439,7 +479,8 @@ async def _gate_load_and_pipelines(config: Config) -> JsonObject:
             for issue in cast(list[JsonObject], checked["issues"]):
                 if issue.get("severity") == "error":
                     problems.append({"pipeline": name, **issue})
-    return _step("load and validate pipelines", problems)
+        assets = await _gate_assets(kernel, refs)
+    return _step("load and validate pipelines", problems), assets
 
 
 async def _gate_typecheck(config: Config) -> JsonObject:
@@ -530,6 +571,18 @@ def _body(
     lines += ["", "## Gate", ""]
     for step in gate:
         lines.append(f"- {'✅' if step['ok'] else '❌'} {step['step']}")
+    assets = [
+        cast(JsonObject, a)
+        for step in gate
+        for a in cast(list[JsonValue], step.get("assets", []))
+    ]
+    if assets:
+        lines += ["", "## Assets", "", "| asset | size | used by |", "|---|---|---|"]
+        for a in assets:
+            size = a.get("size")
+            shown = f"{cast(int, size) / 1e9:.2f} GB" if isinstance(size, int) else "?"
+            used_by = ", ".join(f"`{r}`" for r in cast(list[str], a["used_by"]))
+            lines.append(f"| `{a['id']}` | {shown} | {used_by} |")
     lines += [
         "",
         "## Runs (traces)",

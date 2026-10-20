@@ -49,6 +49,8 @@ TOOLS = {
     "wait_crystallize",
     "sample_run",
     "delete_module",
+    "assets_status",
+    "fetch_assets",
 }
 
 
@@ -112,6 +114,7 @@ async def test_tools_and_instructions(config: Config) -> None:
         "wait_run",
         "wait_crystallize",
         "sample_run",
+        "assets_status",
     }
 
 

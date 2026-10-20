@@ -126,7 +126,8 @@ The server serves the domain repository given by `--root`, else the nearest
 | `save_pipeline` / `list_pipelines` / `get_pipeline` / `delete_pipeline` | saved, validated specs |
 | `crystallize` / `wait_crystallize` | a pull request that makes drafts stable; a long gate goes on in the background |
 | `reload` | restart the kernel after a merge or manual edits |
-| `environment` | Python, PATH, packages (and duplicate builds), binaries of `bin:` caps, as operators see them |
+| `environment` | Python, PATH, packages (and duplicate builds), binaries of `bin:` caps, assets and resource budgets, as operators see them |
+| `assets_status` / `fetch_assets` | the state of the assets (`assets.toml`) a pipeline needs; download them as a run, above 2 GB only with `confirm=true` (the human's word) |
 | `server_status` | the code this server process runs; `stale` when the code on disk is newer (reconnect the server) |
 
 ## Create a domain
