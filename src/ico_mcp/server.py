@@ -9,10 +9,12 @@ history survive kernel restarts.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import replace
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, cast
@@ -141,6 +143,11 @@ DELETES = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 WAIT_MIN = 1.0
 """Bounds of a wait_run timeout: clients have their own tool-call timeouts."""
 SAMPLE_MAX = 20  # as the kernel's MAX_SAMPLES
+
+
+RECONNECT = ("board", "name", "package", "about")
+"""``ico.toml`` fields that the running server cannot apply: the dashboard
+listens already, the instructions are sent, the packages are known."""
 
 
 def create_server(
@@ -770,13 +777,39 @@ def create_server(
         stable package, and conflicts (a draft that differs from its stable
         module). `server` is the `server_status` report: the kernel loads
         new operator code, but a `stale` server needs a reconnect.
+
+        `ico.toml` is read again: `config.changed` lists the sections that
+        changed and now apply (env, assets, resources, targets, timeouts:
+        kernels started from now on get them); `config.reconnect` lists the
+        ones that need the human to reconnect the server (the dashboard
+        address, name, package, about).
         """
+        nonlocal config
+        try:
+            fresh = load_config(config.root)
+        except ConfigError as e:
+            raise ToolError(
+                json.dumps({"code": "config_error", "message": str(e)})
+            ) from None
+        changed = [
+            f.name
+            for f in dataclasses.fields(fresh)
+            if getattr(fresh, f.name) != getattr(config, f.name)
+        ]
+        reconnect = [name for name in changed if name in RECONNECT]
+        config = replace(fresh, **{name: getattr(config, name) for name in reconnect})
+        kernel.config = jobs.config = config
         retired = drafts.retire(config)
         with tool_errors():
             report = await kernel.start()
+        listed: list[JsonValue] = []
+        listed.extend(changed)
+        later: list[JsonValue] = []
+        later.extend(reconnect)
         return {
             **cast(JsonObject, report),
             "drafts": retired,
+            "config": {"changed": listed, "reconnect": later},
             "server": await server_report(),
         }
 

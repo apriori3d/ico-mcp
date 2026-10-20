@@ -423,8 +423,14 @@ UMT5 = Umt5()
   Unlocked assets need `ico assets lock` by the human first.
 - `crystallize` takes `assets.toml` and `assets.lock` along, and its gate
   fails when a moved operator uses an asset that is not in both.
-- A run's profile has a row per resource: uses, time in use, loads and
-  moves with their time, and `reloads` (the RAM budget is too small).
+- A run's profile has a row per resource (`profile.resources` of the
+  result, a table on the dashboard), per process (worker processes have
+  pools of their own): uses, time in use, loads and moves with their
+  time, and `reloads` (the RAM budget is too small); `resource_peaks` is
+  the most the pools held at once per device.
+- After editing `ico.toml` (a budget, a target, `env`) call `reload`: it
+  reads the file again; `config.reconnect` lists what needs the human to
+  reconnect the server instead.
 
  are run as the
 spec `{"kind": "op", "op": ref}` on `input`, and must give exactly one

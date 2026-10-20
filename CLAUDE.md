@@ -227,6 +227,10 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     for remote kernels.
 35. [x] Assets on a target: the runner fails fast with `missing_assets`
     (ico), `fetch_assets(target=)` sends a prefetch job.
+36. [x] Findings of the resources migration: the run result's `profile`
+    and the trace carry the resource rows (main and worker processes;
+    needs the ico change); `reload` reads `ico.toml` again and lists what
+    applies now and what needs a reconnect.
 
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):

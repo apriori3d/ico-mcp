@@ -2,14 +2,18 @@
 
 The kernel sends ``ProfilerTool`` snapshots (``run`` with ``profile``); the
 dashboard shows the whole profile on the plan. The agent gets the few nodes
-that take the most time, formatted as on the dashboard, and the trace keeps
-every node in numbers.
+that take the most time, formatted as on the dashboard, and every resource
+row (loaded models: uses, loads, reloads, size); the trace keeps every node
+and every resource in numbers.
 """
 
 from __future__ import annotations
 
+from typing import cast
+
 from ico.describe.plan.options import PlanRendererOptions
 from ico.tools.profiler import NodeProfile, ProfileSnapshot, profile_cells
+from ico.tools.profiler.report import resource_cells
 
 from ico_mcp.protocol import JsonObject, JsonValue
 
@@ -44,11 +48,45 @@ def summary(snapshot: ProfileSnapshot) -> JsonObject:
                 "info": cell["info"],
             }
         )
-    return {
+    out: JsonObject = {
         "elapsed": round(snapshot["elapsed"], 3),
         "overhead": round(snapshot["overhead"], 3),
         "top": top,
     }
+    rows = resource_cells(snapshot)
+    if rows:
+        listed: list[JsonValue] = []
+        listed.extend(cast(JsonObject, dict(row)) for row in rows)
+        out["resources"] = listed
+        out["resource_peaks"] = {
+            device: f"{size / 1e9:.2f} GB"
+            for device, size in sorted(snapshot["resource_peaks"].items())
+        }
+    return out
+
+
+def resources(snapshot: ProfileSnapshot) -> list[JsonValue]:
+    """Every resource row in numbers (seconds, bytes), for the run trace."""
+    out: list[JsonValue] = []
+    out.extend(
+        {
+            "process": row["process"],
+            "ref": row["ref"],
+            "key": row["key"],
+            "uses": row["uses"],
+            "in_use": _round(row["in_use"]),
+            "loads": row["loads"],
+            "load": _round(row["load_seconds"]),
+            "reloads": row["reloads"],
+            "moves": row["moves"],
+            "move": _round(row["move_seconds"]),
+            "drops": row["drops"],
+            "bytes": row["bytes"],
+            "devices": list[JsonValue](row["devices"]),
+        }
+        for row in snapshot["resources"]
+    )
+    return out
 
 
 def trace(snapshot: ProfileSnapshot) -> list[JsonValue]:
