@@ -31,6 +31,8 @@ ErrorCode = Literal[
     "busy",  # a remote job's work directory is held by another runner
     "storage_error",  # uploading inputs or downloading outputs of a remote run
     "remote_error",  # the target failed (HTTP, a job without a result)
+    "missing_assets",  # a remote run's assets are not on the target (prefetch them)
+    "fetch_error",  # a remote prefetch failed (manifest, hub, a changed source)
 ]
 ERROR_CODES: tuple[ErrorCode, ...] = get_args(ErrorCode)
 

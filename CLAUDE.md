@@ -225,7 +225,7 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     job's events, code by value (drafts and stable, with their imports,
     and the assets manifest), upload / download of local files, keys only
     for remote kernels.
-35. [ ] Assets on a target: the runner fails fast with `missing_assets`
+35. [x] Assets on a target: the runner fails fast with `missing_assets`
     (ico), `fetch_assets(target=)` sends a prefetch job.
 
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
