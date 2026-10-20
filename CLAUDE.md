@@ -220,6 +220,20 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     `save_pipeline` records the referenced pipelines; replacing or
     deleting one reports the pipelines that use it.
 
+32. [ ] Remote runs (ico `docs/design/remote.md`): targets in `ico.toml`,
+    `run(target=)`, code by value, upload / download of local files.
+
+Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
+its item 6; needs apriori3d/ico#75-#78):
+
+33. [x] Kernel env (`[assets] root`, `[resources] ram / gpu`, the
+    manifest beside `ico.toml`), `validate` warnings (`missing_asset`,
+    `unknown_asset`, `no_assets_manifest`), assets in `get_operator` and
+    `environment`, the guide.
+34. [ ] `assets_status` / `fetch_assets` as jobs (ask the human above a
+    few GB), instructions, crystallize gate (asset ids in the manifest and
+    lock, assets with sizes in the PR).
+
 ## Deferred
 See "Deferred" in `docs/design/ico-mcp.md`. Do not implement without a
 real need found in actual use.

@@ -378,7 +378,49 @@ Rules:
   again. It refuses a module other drafts still import (`imported_by`)
   and stable modules (they leave by a pull request).
 
-**Examples** (`examples=[{"ref", "input", "output"}]`) are run as the
+**Models and their files: resources and assets.** A model is not loaded
+inside an operator and its weights are never a hard-coded path:
+
+- Files (weights, LoRAs, tokenizers, tables) are **assets**, listed in the
+  domain's `assets.toml` (a Hugging Face file or subset at a commit, or a
+  URL with its sha256) and pinned in `assets.lock`. A param or field that
+  names one is typed `AssetId` (`from ico.assets import AssetId`); the
+  code gets its path with `asset(id)` (`from ico.assets import asset`).
+- A loaded model is a **resource**: a frozen dataclass declared once in a
+  module of models (with the domain types), its fields JSON params (asset
+  ids, dtype, LoRA), `load()` building it in RAM:
+
+```python
+@resource("wan21.umt5", 1)
+@dataclass(frozen=True)
+class Umt5(Resource[UMT5EncoderModel]):
+    """UMT5-XXL text encoder (bf16, ~11 GB)."""
+
+    weights: AssetId = "wan21-umt5-xxl"
+
+    def load(self) -> UMT5EncoderModel:
+        return UMT5EncoderModel.from_pretrained(asset(self.weights) / "text_encoder")
+
+
+UMT5 = Umt5()
+```
+
+- An operator takes resources as constructor params typed by their class
+  (`encoder: Umt5 = UMT5`) and decides the order of use, for models
+  larger than the GPU: `with self.encoder.use("cuda") as te: ...`, then
+  the next model. Leaving the block releases the model to the pool of the
+  process, which keeps it in RAM while the budget allows
+  (`[resources] ram = "48GB"` in `ico.toml`) and shares it with every
+  operator using an equal resource. No class attributes as caches.
+- `validate` reports assets that are not here (`missing_asset`, with the
+  size) and ids that are not in `assets.toml` (`unknown_asset`, an
+  error); `get_operator` and `environment` show their state. Never
+  download weights yourself: tell the human what is missing and how large
+  it is; fetching tens of GB is their decision (`ico assets fetch <id>`).
+- A run's profile has a row per resource: uses, time in use, loads and
+  moves with their time, and `reloads` (the RAM budget is too small).
+
+ are run as the
 spec `{"kind": "op", "op": ref}` on `input`, and must give exactly one
 output equal to `output`. They become the operator's tests on
 `crystallize`, so they are for **pure operators**: JSON input, JSON
