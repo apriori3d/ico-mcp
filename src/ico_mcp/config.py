@@ -26,6 +26,7 @@ TypecheckMode = Literal["basic", "standard", "strict"]
 
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _GITHUB_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_SIZE = re.compile(r"\s*\d+(?:\.\d+)?\s*[KMGT]?B?\s*", re.IGNORECASE)
 
 
 class ConfigError(ValueError):
@@ -71,6 +72,25 @@ class BoardConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class AssetsConfig:
+    """Where the assets of ``assets.toml`` (beside ``ico.toml``) are on
+    this machine: ``root``, else ``ICO_ASSETS_ROOT`` of the server's
+    environment, else ICO's default (``~/.cache/ico/assets``)."""
+
+    root: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourcesConfig:
+    """Memory budgets of the resource pool of each kernel (``"48GB"``):
+    released models stay in RAM up to ``ram`` and on the GPU up to
+    ``gpu``; ``None`` keeps ICO's defaults (half the memory, 0)."""
+
+    ram: str | None = None
+    gpu: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Loaded ``ico.toml`` of a repository.
 
@@ -94,6 +114,8 @@ class Config:
     typecheck: TypecheckMode = "strict"
     about: str = ""
     board: BoardConfig = BoardConfig()
+    assets: AssetsConfig = AssetsConfig()
+    resources: ResourcesConfig = ResourcesConfig()
     """What the domain is about, in a few lines; added to the server
     instructions (its workflow and conventions go to ``docs/domain.md``)."""
 
@@ -116,6 +138,11 @@ class Config:
     @property
     def runs_dir(self) -> Path:
         return self.root / "runs"
+
+    @property
+    def assets_manifest(self) -> Path:
+        """``assets.toml``: the pinned files the domain's operators need."""
+        return self.root / "assets.toml"
 
     @property
     def domain_notes(self) -> Path:
@@ -160,6 +187,14 @@ def load_config(root: str | Path) -> Config:
     typecheck = table.choice("typecheck", get_args(TypecheckMode), "strict")
     about = table.string("about", "") if "about" in data else ""
     board = _board(table.table("board")) if "board" in data else BoardConfig()
+    assets = (
+        _assets(table.table("assets"), root) if "assets" in data else AssetsConfig()
+    )
+    resources = (
+        _resources(table.table("resources"))
+        if "resources" in data
+        else ResourcesConfig()
+    )
     table.reject_unknown()
 
     config = Config(
@@ -172,6 +207,8 @@ def load_config(root: str | Path) -> Config:
         typecheck=cast(TypecheckMode, typecheck),
         about=about.strip(),
         board=board,
+        assets=assets,
+        resources=resources,
     )
     for directory in (config.stable_dir, config.draft_dir):
         if not (directory / "__init__.py").is_file():
@@ -200,6 +237,28 @@ def _board(table: _Table) -> BoardConfig:
         raise _error(table.key("port"), "a port number (0 for a free one)", port)
     table.reject_unknown()
     return BoardConfig(host=host, port=port)
+
+
+def _assets(table: _Table, root: Path) -> AssetsConfig:
+    value = table.string("root", "") if "root" in table.data else ""
+    table.reject_unknown()
+    if not value:
+        return AssetsConfig()
+    path = Path(value).expanduser()
+    return AssetsConfig(root=path if path.is_absolute() else root / path)
+
+
+def _resources(table: _Table) -> ResourcesConfig:
+    # The format of ico.resources.parse_size, checked here without importing
+    # ICO's registry into the server.
+    budgets: dict[str, str | None] = {}
+    for key in ("ram", "gpu"):
+        value = table.string(key, "") if key in table.data else ""
+        if value and not _SIZE.fullmatch(value):
+            raise _error(table.key(key), "a size such as '48GB'", value)
+        budgets[key] = value or None
+    table.reject_unknown()
+    return ResourcesConfig(ram=budgets["ram"], gpu=budgets["gpu"])
 
 
 def _timeouts(table: _Table) -> Timeouts:

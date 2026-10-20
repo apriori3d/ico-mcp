@@ -26,6 +26,25 @@ from ico_mcp.protocol import JsonObject, JsonValue, KernelError, decode, encode
 BASE_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "VIRTUAL_ENV")
 """Variables always passed to the kernel; others only via ``ico.toml`` ``env``."""
 
+
+def asset_env(config: Config) -> dict[str, str]:
+    """The asset manifest and root, and the resource budgets, for the
+    kernel (from ``ico.toml``, not through the ``env`` allowlist)."""
+    env: dict[str, str] = {}
+    if config.assets_manifest.is_file():
+        env["ICO_ASSETS_MANIFEST"] = str(config.assets_manifest)
+    root = config.assets.root
+    if root is not None:
+        env["ICO_ASSETS_ROOT"] = str(root)
+    elif "ICO_ASSETS_ROOT" in os.environ:
+        env["ICO_ASSETS_ROOT"] = os.environ["ICO_ASSETS_ROOT"]
+    if config.resources.ram:
+        env["ICO_RESOURCES_RAM"] = config.resources.ram
+    if config.resources.gpu:
+        env["ICO_RESOURCES_GPU"] = config.resources.gpu
+    return env
+
+
 MAX_LINE = 256 * 1024 * 1024
 STDERR_TAIL = 8 * 1024
 
@@ -251,7 +270,8 @@ class KernelClient:
 
     def _env(self) -> dict[str, str]:
         names = (*BASE_ENV, *self.config.env)
-        return {name: os.environ[name] for name in names if name in os.environ}
+        env = {name: os.environ[name] for name in names if name in os.environ}
+        return {**env, **asset_env(self.config)}
 
 
 async def _notify(on_notification: OnNotification, message: JsonObject) -> None:

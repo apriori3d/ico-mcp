@@ -68,7 +68,7 @@ from ico.tools.profiler import ProfilerTool, ProfileSnapshot
 from ico.tools.profiler.instrument import label
 from ico.tools.sample import JsonSampleTool, SampleSnapshot
 
-from ico_mcp import environment
+from ico_mcp import assets, environment
 from ico_mcp.config import Config, load_config
 from ico_mcp.domain_types import DomainType, collect
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError, decode, encode
@@ -216,6 +216,9 @@ class Kernel:
             resolved: JsonObject = {}
             resolved.update(environment.bins(needed))
             card["bins"] = resolved
+        found = assets.operator_assets(ref)
+        if found:
+            card["assets"] = found
         return card
 
     def module_cards(self, params: JsonObject) -> JsonValue:
@@ -278,7 +281,7 @@ class Kernel:
             for entry in default_registry
             for name in environment.bin_names(entry.meta.caps)
         ]
-        return environment.report(self.config, needed, match)
+        return {**environment.report(self.config, needed, match), **assets.report()}
 
     def validate(self, params: JsonObject) -> JsonValue:
         """Signature issues of a spec built with ``params``, and the pipeline
@@ -288,6 +291,7 @@ class Kernel:
         declared: JsonValue = None
         issues: list[JsonValue] = []
         issues.extend(_missing_binaries(_required(params, "spec", dict)))
+        issues.extend(assets.issues(spec, values))
         try:
             found: list[JsonValue] = []
             found.extend(p.to_dict() for p in spec_params(spec))
