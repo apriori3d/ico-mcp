@@ -158,6 +158,7 @@ class Jobs:
         profile: bool = False,
         recent: bool = False,
         target: TargetConfig | None = None,
+        fetch: bool = False,
     ) -> Job:
         """Start a run in a new kernel; it finishes in the background.
 
@@ -166,7 +167,9 @@ class Jobs:
         (the dashboard shows it on the plan, the result has a summary);
         ``target`` sends the run to a remote target: its kernel loads no
         operators, carries the code of the modules the spec uses (and the
-        assets manifest) in the job, and bridges the job's events.
+        assets manifest) in the job, and bridges the job's events;
+        ``fetch`` with a ``target`` sends a prefetch of the asset ids in
+        ``input`` instead (the job carries only the manifest and lock).
         """
         if self._tasks is None:
             raise RuntimeError("Jobs is not entered")
@@ -188,6 +191,8 @@ class Jobs:
             params["profile"] = True
         if recent:
             params["recent"] = True
+        if fetch:
+            params["fetch"] = True
         if on_progress is not None:
             job.listeners.append(on_progress)
         self._tasks.start_soon(self._run, job, params, pipeline, target)
@@ -316,7 +321,9 @@ class Jobs:
         if target is None:
             job.kernel.modules = modules
         else:
-            sources, packages = job_code(self.config, modules)
+            sources, packages = job_code(
+                self.config, [] if params.get("fetch") else modules
+            )
             params = {
                 **params,
                 "run_id": job.id,

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import cast
 
 from ico.core.runtime.cancel import IcoCancelToken
-from ico.remote import Job, Package, RunPod
+from ico.remote import FetchJob, Job, Package, RunPod
 from ico.remote.runpod import API
 from ico.remote.storage import storage_for
 
@@ -74,13 +74,8 @@ def run_remote(
         max_items=cast(int | None, params.get("max_items")),
         id=run_id,
     )
-    executor = RunPod(
-        str(target["endpoint"]),
-        execution_timeout=float(cast(float, target.get("execution_timeout", 10800))),
-        base_url=os.environ.get(API_ENV) or API,
-    )
     try:
-        handle = executor.submit(job)
+        handle = _executor(target).submit(job)
     except RuntimeError as e:
         raise KernelError("remote_error", str(e)) from None
     # A cancel (SIGTERM, in the main thread) must not wait for HTTP there.
@@ -116,6 +111,70 @@ def run_remote(
     if staged:
         result["uploaded"] = cast(JsonValue, dict(staged))
     return result
+
+
+def fetch_remote(
+    params: JsonObject, notify: Notify, cancel: IcoCancelToken
+) -> JsonObject:
+    """A prefetch on the target: the manifest and lock of ``sources``, the
+    asset ids as ``input``; ``fetch`` events become progress snapshots
+    (one node per asset, in MB). The result is shaped as a fetch run's:
+    one output ``{"fetched": [states]}``."""
+    target = cast(JsonObject, params["target"])
+    sources = cast(JsonObject, params.get("sources") or {})
+    if "assets.toml" not in sources or "assets.lock" not in sources:
+        raise KernelError(
+            "bad_request", "the domain has no assets.toml and assets.lock"
+        )
+    job = FetchJob(
+        manifest=str(sources["assets.toml"]),
+        lock=str(sources["assets.lock"]),
+        ids=tuple(str(i) for i in cast(list[JsonValue], params.get("input") or [])),
+        id=str(params["run_id"]),
+    )
+    handle = _executor(target).submit(job)
+    cancel.add_listener(
+        lambda reason: threading.Thread(target=handle.cancel, daemon=True).start()
+    )
+    try:
+        for event in handle.events():
+            kind = event.get("event")
+            if kind == "fetch":
+                id = str(event.get("asset"))
+                snapshot: JsonObject = {
+                    "key": f"fetch.{id}",
+                    "label": f"fetch {id} (MB)",
+                    "node": None,
+                    "done": round(float(cast(float, event.get("done") or 0)) / 1e6, 1),
+                    "total": round(
+                        float(cast(float, event.get("total") or 0)) / 1e6, 1
+                    ),
+                    "rate": None,
+                    "eta": None,
+                }
+                notify("progress", {"snapshot": snapshot})
+            elif kind == "result":
+                result = cast(JsonObject, event["result"])
+                return {
+                    "outputs": [{"fetched": result.get("assets")}],
+                    "total": 1,
+                    "errors": [],
+                    "root": result.get("root"),
+                    "target": str(target["name"]),
+                }
+            elif kind == "error":
+                raise _job_error(event)
+    except RuntimeError as e:
+        raise KernelError("remote_error", str(e)) from None
+    raise KernelError("remote_error", "the prefetch ended without a result")
+
+
+def _executor(target: JsonObject) -> RunPod:
+    return RunPod(
+        str(target["endpoint"]),
+        execution_timeout=float(cast(float, target.get("execution_timeout", 10800))),
+        base_url=os.environ.get(API_ENV) or API,
+    )
 
 
 def _job_error(event: JsonObject) -> KernelError:

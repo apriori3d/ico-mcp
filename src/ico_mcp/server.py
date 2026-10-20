@@ -87,6 +87,8 @@ operators and types, runs); call it whenever these notes are not enough.
    the size; assets_status shows what is here. Tell the human what is
    missing and how large; fetch_assets downloads only on their word
    (confirm=true above 2 GB) and runs as a run (wait_run, cancel_run).
+   A run on a target (run(target=...)) that ends with missing_assets
+   needs fetch_assets(target=..., pipeline=...) there, on the same word.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -843,6 +845,7 @@ def create_server(
         spec: dict[str, JsonValue] | None = None,
         params: dict[str, JsonValue] | None = None,
         confirm: bool = False,
+        target: str | None = None,
     ) -> dict[str, JsonValue]:
         """Download missing assets (of `ids`, a `pipeline`, a `spec`, or
         all) as a run: returns its `run_id` at once; follow it with
@@ -851,7 +854,25 @@ def create_server(
         human what and how much (the call without `confirm` returns
         `needs_confirmation` with the sizes), and fetch only on their word.
         Unlocked or unknown assets are an error: they need `ico assets
-        lock` or an entry in `assets.toml` first."""
+        lock` or an entry in `assets.toml` first.
+
+        `target` fetches them onto a target's volume instead (after a
+        remote run ended with `missing_assets`): a prefetch job there,
+        sized as an upper bound (what the volume already has is skipped)."""
+        chosen = None
+        if target is not None:
+            by_name = {t.name: t for t in config.targets}
+            chosen = by_name.get(target)
+            if chosen is None:
+                raise ToolError(
+                    json.dumps(
+                        {
+                            "code": "bad_request",
+                            "message": f"no target {target!r} in ico.toml; "
+                            f"targets: {', '.join(sorted(by_name)) or 'none'}",
+                        }
+                    )
+                )
         found = await asset_request(ids, pipeline, spec, params)
         items = cast(list[JsonObject], found["items"])
         if found.get("manifest") is None:
@@ -872,20 +893,45 @@ def create_server(
                     }
                 )
             )
-        wanted = [cast(str, i["id"]) for i in items if i["state"] in FETCHABLE]
-        to_fetch = cast(int, found["to_fetch"])
+        if chosen is not None:
+            # The target's volume is not visible here: everything it may lack.
+            wanted = [cast(str, i["id"]) for i in items]
+            to_fetch = sum(cast(int, i.get("size") or 0) for i in items)
+        else:
+            wanted = [cast(str, i["id"]) for i in items if i["state"] in FETCHABLE]
+            to_fetch = cast(int, found["to_fetch"])
         if not wanted:
             return {"state": "present", "items": cast(JsonValue, items)}
         if to_fetch > CONFIRM_BYTES and not confirm:
+            size = f"{to_fetch / 1e9:.1f} GB"
+            what = (
+                f"up to {size} to download onto {chosen.name}"
+                if chosen
+                else f"{size} to download"
+            )
             return {
                 "state": "needs_confirmation",
                 "to_fetch": to_fetch,
-                "message": f"{to_fetch / 1e9:.1f} GB to download "
-                f"({', '.join(wanted)}): ask the human, then call again with "
-                "confirm=true",
+                "message": f"{what} ({', '.join(wanted)}): ask the human, then call "
+                "again with confirm=true",
                 "items": cast(JsonValue, items),
             }
-        job = jobs.start(FETCH_SPEC, list[JsonValue](wanted), MAX_ITEMS)
+        job = jobs.start(
+            FETCH_SPEC,
+            list[JsonValue](wanted),
+            MAX_ITEMS,
+            target=chosen,
+            fetch=chosen is not None,
+        )
+        if chosen is not None:
+            return {
+                "run_id": job.id,
+                "state": "running",
+                "target": chosen.name,
+                "up_to": to_fetch,
+                "assets": list[JsonValue](wanted),
+                "dashboard": board.url,
+            }
         return {
             "run_id": job.id,
             "state": "running",

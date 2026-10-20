@@ -280,3 +280,97 @@ def test_targets_in_ico_toml(make_repo: MakeRepo, tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="targets.x.storage: expected an s3://"):
         make_repo(tmp_path / "b", '[targets.x]\nendpoint = "e"\nstorage = "/tmp"\n')
+
+
+# ─── Assets on the target ───
+
+NOTES = b"hello"
+NOTES_OPS = '''
+from ico import IcoOperator
+from ico.assets import AssetId, asset
+from ico.registry import register
+
+
+@register("asset_text", 1)
+class AssetText(IcoOperator[str, str]):
+    """The text of a file asset after a prefix."""
+
+    def __init__(self, notes: AssetId = "notes") -> None:
+        self.notes = notes
+        super().__init__(fn=self._apply)
+
+    def _apply(self, prefix: str) -> str:
+        return prefix + asset(self.notes).read_text()
+'''
+
+
+def serve_files(files: dict[str, bytes]) -> ThreadingHTTPServer:
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+        def do_HEAD(self) -> None:
+            self.reply(head=True)
+
+        def do_GET(self) -> None:
+            self.reply(head=False)
+
+        def reply(self, head: bool) -> None:
+            data = files[self.path.lstrip("/")]
+            self.send_response(200)
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            if not head:
+                self.wfile.write(data)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+async def test_missing_assets_then_a_prefetch_on_the_target(
+    remote: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    files = serve_files({"notes.txt": NOTES})
+    url = f"http://127.0.0.1:{files.server_address[1]}/notes.txt"
+    digest = hashlib.sha256(NOTES).hexdigest()
+    (remote.root / "assets.toml").write_text(
+        f'[assets.notes]\nurl = "{url}"\nsha256 = "{digest}"\n'
+    )
+    (remote.root / "assets.lock").write_text(
+        'version = 1\n\n[[asset]]\nid = "notes"\nkind = "file"\n'
+        f'files = [ {{ name = "notes.txt", size = {len(NOTES)}, sha256 = "{digest}" }} ]\n'
+    )
+    (remote.root / "domain_draft" / "notes.py").write_text(textwrap.dedent(NOTES_OPS))
+    volume = tmp_path / "volume" / "assets"
+    monkeypatch.setenv("ICO_ASSETS_ROOT", str(volume))  # the worker's root
+    spec = {"kind": "op", "op": "asset_text@1"}
+    async with Client(create_server(remote)) as client:
+        first = await call(
+            client, "run", spec=spec, input="> ", target="gpu", wait=False
+        )
+        failed = await finish(client, first["run_id"])
+        fetching = await call(client, "fetch_assets", spec=spec, target="gpu")
+        fetched = await finish(client, fetching["run_id"])
+        again = await call(
+            client, "run", spec=spec, input="> ", target="gpu", wait=False
+        )
+        done = await finish(client, again["run_id"])
+    files.shutdown()
+
+    assert failed["state"] == "failed"
+    assert failed["kernel_error"]["code"] == "missing_assets"
+    assert failed["kernel_error"]["assets"] == [
+        {"id": "notes", "reason": "missing", "size": 5}
+    ]
+    assert (fetching["target"], fetching["assets"], fetching["up_to"]) == (
+        "gpu",
+        ["notes"],
+        5,
+    )
+    assert fetched["state"] == "done" and fetched["title"] == "fetch assets @ gpu"
+    assert fetched["result"]["outputs"][0]["fetched"][0]["state"] == "present"
+    assert (volume / "notes" / "notes.txt").read_bytes() == NOTES
+    assert done["state"] == "done" and done["result"]["outputs"] == ["> hello"]

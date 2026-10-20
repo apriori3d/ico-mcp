@@ -514,6 +514,11 @@ class VideoRef:
   cancel loses the outputs so far. First run a small input locally; a
   remote run costs GPU time from the worker's start (model loading
   included).
+  Assets live on the target's volume, not here: a remote run whose assets
+  are not there ends at once with `missing_assets` (ids, sizes). Tell the
+  human, and on their word `fetch_assets(target=..., pipeline=...)`
+  prefetches them there (sized as an upper bound: what the volume has is
+  skipped); then run again.
 
 ### Profiling a slow run
 

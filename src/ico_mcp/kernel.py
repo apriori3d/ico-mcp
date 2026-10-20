@@ -377,6 +377,8 @@ class Kernel:
         try:
             if token.cancelled:
                 raise KernelError("cancelled", "the run was cancelled")
+            if params.get("fetch"):
+                return remote.fetch_remote(params, notify, token)
             return remote.run_remote(params, self.config.runs_dir, notify, token)
         finally:
             self._cancel = None
