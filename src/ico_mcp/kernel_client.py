@@ -27,6 +27,18 @@ BASE_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "VIRTUAL_ENV")
 """Variables always passed to the kernel; others only via ``ico.toml`` ``env``."""
 
 
+REMOTE_ENV = (
+    "RUNPOD_API_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ENDPOINT_URL_S3",
+    "AWS_REGION",
+    "ICO_RUNPOD_API",
+)
+"""Keys of remote runs (and the RunPod API root, for tests): only the
+kernel of a remote run gets them; it runs no domain code."""
+
+
 def asset_env(config: Config) -> dict[str, str]:
     """The asset manifest and root, and the resource budgets, for the
     kernel (from ``ico.toml``, not through the ``env`` allowlist)."""
@@ -66,14 +78,23 @@ class KernelClient:
         ...     cards = await kernel.request("search", {"text": "resize"})
     """
 
-    def __init__(self, config: Config, modules: Sequence[str] | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        modules: Sequence[str] | None = None,
+        *,
+        remote: bool = False,
+    ) -> None:
         """Args:
         config: The repository configuration.
         modules: Operator modules to load (``domain_draft.slug``); ``None``
             loads both packages entirely. Used again on every restart.
+        remote: The kernel of a remote run: it gets the keys of
+            :data:`REMOTE_ENV` (and is given no modules to load).
         """
         self.config = config
         self.modules = modules
+        self.remote = remote
         self._lock = anyio.Lock()
         self._write_lock = anyio.Lock()
         """Lines to the kernel's stdin: requests and one-way messages."""
@@ -270,6 +291,8 @@ class KernelClient:
 
     def _env(self) -> dict[str, str]:
         names = (*BASE_ENV, *self.config.env)
+        if self.remote:
+            names = (*names, *REMOTE_ENV)
         env = {name: os.environ[name] for name in names if name in os.environ}
         return {**env, **asset_env(self.config)}
 

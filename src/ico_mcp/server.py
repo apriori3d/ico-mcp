@@ -347,6 +347,7 @@ def create_server(
         wait: bool = True,
         profile: bool = False,
         recent: bool = False,
+        target: str | None = None,
     ) -> dict[str, JsonValue]:
         """Run a spec, or a saved pipeline by name, once on a JSON input;
         returns outputs and per-item errors.
@@ -372,6 +373,13 @@ def create_server(
         the nodes with the largest self time, with `first call` (lazy setup:
         a first call far slower than the others), `util` (pool utilization) and `transfer` (worker
         overhead) in `info`; the dashboard shows every node on the plan.
+
+        `target` (a name from `ico.toml` `[targets]`) runs it on a cloud GPU:
+        the code of the operators it uses goes with it (drafts included),
+        local files in `input` / `params` are uploaded, and the outputs come
+        back into `runs/<run_id>/out/`. Follow it as any run; `sample_run`
+        shows only `recent=true` previews, and a cancel loses the outputs
+        so far.
         """
         if (spec is None) == (pipeline is None):
             raise ToolError(
@@ -383,6 +391,20 @@ def create_server(
                 )
             )
         _check_input(input)
+        chosen = None
+        if target is not None:
+            by_name = {t.name: t for t in config.targets}
+            chosen = by_name.get(target)
+            if chosen is None:
+                raise ToolError(
+                    json.dumps(
+                        {
+                            "code": "bad_request",
+                            "message": f"no target {target!r} in ico.toml; "
+                            f"targets: {', '.join(sorted(by_name)) or 'none'}",
+                        }
+                    )
+                )
         if pipeline is not None:
             with tool_errors():
                 spec = _saved(config, pipeline)
@@ -405,6 +427,7 @@ def create_server(
             values=params,
             profile=profile,
             recent=recent,
+            target=chosen,
         )
         if not wait:
             return {"run_id": job.id, "state": "running", "dashboard": board.url}

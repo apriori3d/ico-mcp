@@ -220,8 +220,13 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     `save_pipeline` records the referenced pipelines; replacing or
     deleting one reports the pipelines that use it.
 
-32. [ ] Remote runs (ico `docs/design/remote.md`): targets in `ico.toml`,
-    `run(target=)`, code by value, upload / download of local files.
+32. [x] Remote runs (ico `docs/design/remote.md`): targets in `ico.toml`,
+    `run(target=)` in a kernel that loads no operators and bridges the
+    job's events, code by value (drafts and stable, with their imports,
+    and the assets manifest), upload / download of local files, keys only
+    for remote kernels.
+35. [ ] Assets on a target: the runner fails fast with `missing_assets`
+    (ico), `fetch_assets(target=)` sends a prefetch job.
 
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):
