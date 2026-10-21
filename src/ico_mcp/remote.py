@@ -18,6 +18,7 @@ from typing import cast
 from ico.core.runtime.cancel import IcoCancelToken
 from ico.remote import FetchJob, Job, Package, RunPod
 from ico.remote.runpod import API
+from ico.remote.runpod_api import REST_API, RunPodApi, RunPodApiError, Volume
 from ico.remote.storage import storage_for
 
 from ico_mcp.protocol import ERROR_CODES, JsonObject, JsonValue, KernelError
@@ -25,6 +26,7 @@ from ico_mcp.protocol import ERROR_CODES, JsonObject, JsonValue, KernelError
 UPLOAD_LIMIT = 5 * 10**9
 """Bytes of local inputs a remote run uploads at most."""
 API_ENV = "ICO_RUNPOD_API"
+REST_ENV = "ICO_RUNPOD_REST"
 BRIDGED = ("plan", "progress", "profile", "sample")
 
 Notify = Callable[[str, JsonObject], None]
@@ -44,7 +46,14 @@ def run_remote(
     """
     target = cast(JsonObject, params["target"])
     run_id = str(params["run_id"])
-    storage = str(target["storage"])
+    volume = _volume(target)
+    if volume is not None:
+        # The order's volume is the storage: its S3 API from here, its
+        # mount on the worker.
+        os.environ.update(volume.s3_env())
+        storage = volume.uri("ico").rstrip("/")
+    else:
+        storage = str(target["storage"])
     try:
         staged: dict[str, str] = {}
         budget = [UPLOAD_LIMIT]
@@ -73,6 +82,7 @@ def run_remote(
         recent=bool(params.get("recent")),
         max_items=cast(int | None, params.get("max_items")),
         id=run_id,
+        volume=volume.id if volume is not None else None,
     )
     try:
         handle = _executor(target).submit(job)
@@ -167,6 +177,53 @@ def fetch_remote(
     except RuntimeError as e:
         raise KernelError("remote_error", str(e)) from None
     raise KernelError("remote_error", "the prefetch ended without a result")
+
+
+def volume_up(params: JsonObject) -> JsonObject:
+    """Create a volume for an order and attach it to the target's endpoint."""
+    target = cast(JsonObject, params["target"])
+    try:
+        created = _api().volume_up(
+            str(target["endpoint"]),
+            int(cast(int, params["size"])),
+            str(params["datacenter"]),
+            str(params.get("name") or f"ico-{target['name']}"),
+        )
+    except RunPodApiError as e:
+        raise KernelError("remote_error", str(e)) from None
+    return {
+        "id": created.id,
+        "name": created.name,
+        "size": created.size,
+        "datacenter": created.datacenter,
+    }
+
+
+def volume_down(params: JsonObject) -> JsonObject:
+    """Detach the order's volume from the endpoint and delete it."""
+    target = cast(JsonObject, params["target"])
+    volume = cast(JsonObject, params["volume"])
+    try:
+        _api().volume_down(str(target["endpoint"]), str(volume["id"]))
+    except RunPodApiError as e:
+        raise KernelError("remote_error", str(e)) from None
+    return {"deleted": volume["id"]}
+
+
+def _api() -> RunPodApi:
+    return RunPodApi(base_url=os.environ.get(REST_ENV) or REST_API)
+
+
+def _volume(target: JsonObject) -> Volume | None:
+    found = target.get("volume")
+    if not isinstance(found, dict):
+        return None
+    return Volume(
+        id=str(found["id"]),
+        name=str(found.get("name") or ""),
+        size=int(cast(int, found.get("size") or 0)),
+        datacenter=str(found["datacenter"]),
+    )
 
 
 def _executor(target: JsonObject) -> RunPod:

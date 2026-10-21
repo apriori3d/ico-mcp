@@ -123,6 +123,8 @@ class Kernel:
             "modules": self.modules,
             "validate": self.validate,
             "assets_status": self.assets_status,
+            "volume_up": lambda params: remote.volume_up(params),
+            "volume_down": lambda params: remote.volume_down(params),
             "run": self.run,
         }
 

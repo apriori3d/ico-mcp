@@ -93,13 +93,15 @@ class ResourcesConfig:
 @dataclass(frozen=True, slots=True)
 class TargetConfig:
     """Where ``run(target=...)`` sends a run: a RunPod Serverless endpoint
-    and the storage of its inputs and outputs (``s3://bucket/prefix``).
+    and the storage of its inputs and outputs (``s3://bucket/prefix``);
+    without ``storage``, the network volume of the current order is the
+    storage (``volume_up``).
     Keys are environment variables of the server (``RUNPOD_API_KEY``,
     ``AWS_*``), given only to the kernels of remote runs."""
 
     name: str
     endpoint: str
-    storage: str
+    storage: str | None = None
     provider: Literal["runpod"] = "runpod"
     execution_timeout: float = 10800
 
@@ -283,15 +285,15 @@ def _targets(table: _Table) -> tuple[TargetConfig, ...]:
     for name in sorted(table.data):
         target = table.table(name)
         provider = target.choice("provider", ("runpod",), "runpod")
-        storage = target.string("storage")
-        if not storage.startswith(("s3://", "file://")):
+        storage = target.string("storage", "") if "storage" in target.data else ""
+        if storage and not storage.startswith(("s3://", "file://")):
             raise _error(target.key("storage"), "an s3:// (or file://) URI", storage)
         found.append(
             TargetConfig(
                 name=name,
                 provider=cast(Literal["runpod"], provider),
                 endpoint=target.string("endpoint"),
-                storage=storage.rstrip("/"),
+                storage=storage.rstrip("/") or None,
                 execution_timeout=target.positive("execution_timeout", 10800),
             )
         )

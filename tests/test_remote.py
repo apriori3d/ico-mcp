@@ -186,7 +186,7 @@ async def test_a_run_goes_to_the_target(remote: Config) -> None:
         done = await finish(client, started["run_id"])
         board = await call(client, "dashboard")
 
-    assert done["state"] == "done", done
+    assert done["state"] == "done", done.get("kernel_error")
     assert done["result"]["outputs"] == [3]
     assert done["result"]["target"] == "gpu"
     assert done["title"] == "count_words@1, shout@1 @ gpu"
@@ -210,7 +210,7 @@ async def test_files_go_up_and_outputs_come_back(
         )  # fmt: skip
         done = await finish(client, started["run_id"])
 
-    assert done["state"] == "done", done
+    assert done["state"] == "done", done.get("kernel_error")
     [output] = done["result"]["outputs"]
     local = remote.runs_dir / started["run_id"] / "out" / "notes.txt"
     assert output == str(local) and local.read_text() == "HELLO1"
@@ -374,3 +374,136 @@ async def test_missing_assets_then_a_prefetch_on_the_target(
     assert fetched["result"]["outputs"][0]["fetched"][0]["state"] == "present"
     assert (volume / "notes" / "notes.txt").read_bytes() == NOTES
     assert done["state"] == "done" and done["result"]["outputs"] == ["> hello"]
+
+
+# ─── Volumes of an order ───
+
+
+class FakeRest:
+    """/networkvolumes and /endpoints/<id> of RunPod's REST API."""
+
+    def __init__(self) -> None:
+        self.volumes: dict[str, dict[str, Any]] = {}
+        self.calls: list[tuple[str, str, Any]] = []
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                fake.serve(self, "GET")
+
+            def do_POST(self) -> None:
+                fake.serve(self, "POST")
+
+            def do_PATCH(self) -> None:
+                fake.serve(self, "PATCH")
+
+            def do_DELETE(self) -> None:
+                fake.serve(self, "DELETE")
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+
+    def serve(self, request: BaseHTTPRequestHandler, method: str) -> None:
+        assert request.headers["authorization"] == f"Bearer {KEY}"
+        length = int(request.headers.get("content-length") or 0)
+        body: Any = json.loads(request.rfile.read(length)) if length else None
+        path = request.path.removeprefix("/v1")
+        self.calls.append((method, path, body))
+        reply: Any = {}
+        if path == "/networkvolumes" and method == "POST":
+            reply = {"id": f"vol{len(self.volumes) + 1}", **body}
+            self.volumes[reply["id"]] = reply
+        elif path.startswith("/networkvolumes/") and method == "DELETE":
+            self.volumes.pop(path.rsplit("/", 1)[1])
+        data = json.dumps(reply).encode()
+        request.send_response(200)
+        request.send_header("content-length", str(len(data)))
+        request.end_headers()
+        request.wfile.write(data)
+
+
+@pytest.fixture
+def ordered(
+    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[Config, FakeRest, FakeRunPod]]:
+    """A target without storage: the order's volume is its storage."""
+    runpod, rest = FakeRunPod(), FakeRest()
+    monkeypatch.setenv("RUNPOD_API_KEY", KEY)
+    monkeypatch.setenv("ICO_RUNPOD_API", runpod.url)
+    monkeypatch.setenv("ICO_RUNPOD_REST", rest.url)
+    monkeypatch.setenv("ICO_WORKDIRS", str(tmp_path / "volume" / "jobs"))
+    monkeypatch.setenv(
+        "ICO_VOLUME_ROOT", str(tmp_path / "volume")
+    )  # the worker's mount
+    repo = tmp_path / "repo"
+    make_repo(repo, '[targets.gpu]\nendpoint = "ep"\n')
+    yield load_config(repo), rest, runpod
+    runpod.server.shutdown()
+    rest.server.shutdown()
+
+
+async def test_an_order_brings_its_volume_up_and_down(
+    ordered: tuple[Config, FakeRest, FakeRunPod],
+) -> None:
+    config, rest, runpod = ordered
+    async with Client(create_server(config)) as client:
+        without = await call_error(
+            client, "run", spec=seq("shout@1"), input="x", target="gpu"
+        )
+        asked = await call(client, "volume_up", target="gpu", datacenter="EU-RO-1")
+        up = await call(
+            client,
+            "volume_up",
+            target="gpu",
+            datacenter="EU-RO-1",
+            size_gb=100,
+            confirm=True,
+        )
+        again = await call(client, "volume_up", target="gpu", datacenter="EU-RO-1")
+        started = await call(
+            client,
+            "run",
+            spec={"kind": "op", "op": "shout@1"},
+            input="hi",
+            target="gpu",
+            wait=False,
+        )
+        done = await finish(client, started["run_id"])
+        kept = await call(client, "volume_down", target="gpu")
+        down = await call(client, "volume_down", target="gpu", confirm=True)
+        gone = await call_error(
+            client, "run", spec=seq("shout@1"), input="x", target="gpu"
+        )
+
+    assert without["code"] == "no_volume" and gone["code"] == "no_volume"
+    assert (
+        asked["state"] == "needs_confirmation" and "$10.50 a month" in asked["message"]
+    )
+    volume = {"id": "vol1", "name": "ico-gpu", "size": 100, "datacenter": "EU-RO-1"}
+    assert up == {"state": "up", "volume": volume} and again["state"] == "exists"
+    assert rest.calls[:2] == [
+        (
+            "POST",
+            "/networkvolumes",
+            {"name": "ico-gpu", "size": 100, "dataCenterId": "EU-RO-1"},
+        ),
+        (
+            "PATCH",
+            "/endpoints/ep",
+            {"networkVolumeId": "vol1", "dataCenterIds": ["EU-RO-1"]},
+        ),
+    ]
+    assert done["state"] == "done", done.get("kernel_error")
+    assert done["result"]["outputs"] == ["HI"]
+    [job] = runpod.jobs.values()
+    assert job.body["input"]["job"]["volume"] == "vol1"
+    assert (
+        job.body["input"]["job"]["out"] == f"s3://vol1/ico/runs/{started['run_id']}/out"
+    )
+    assert kept["state"] == "needs_confirmation"
+    assert down["state"] == "down" and rest.volumes == {}
+    assert ("PATCH", "/endpoints/ep", {"networkVolumeIds": []}) in rest.calls

@@ -26,8 +26,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, JsonValue, WithJsonSchema
 
-from ico_mcp import drafts, pipelines, scaffold
-from ico_mcp.config import Config, ConfigError, find_root, load_config
+from ico_mcp import drafts, pipelines, scaffold, targets
+from ico_mcp.config import Config, ConfigError, TargetConfig, find_root, load_config
 from ico_mcp.crystallize import Crystallization, Crystallizations
 from ico_mcp.crystallize import crystallize as open_pull_request
 from ico_mcp.fetching import CONFIRM_BYTES, FETCH_SPEC, FETCHABLE, MAX_ITEMS
@@ -91,6 +91,8 @@ operators and types, runs); call it whenever these notes are not enough.
    (confirm=true above 2 GB) and runs as a run (wait_run, cancel_run).
    A run on a target (run(target=...)) that ends with missing_assets
    needs fetch_assets(target=..., pipeline=...) there, on the same word.
+   A target without storage works on the volume of an order: volume_up
+   and volume_down, each on the human's word (confirm=true).
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -400,20 +402,9 @@ def create_server(
                 )
             )
         _check_input(input)
-        chosen = None
-        if target is not None:
-            by_name = {t.name: t for t in config.targets}
-            chosen = by_name.get(target)
-            if chosen is None:
-                raise ToolError(
-                    json.dumps(
-                        {
-                            "code": "bad_request",
-                            "message": f"no target {target!r} in ico.toml; "
-                            f"targets: {', '.join(sorted(by_name)) or 'none'}",
-                        }
-                    )
-                )
+        chosen = resolve_target(target) if target is not None else None
+        if chosen is not None:
+            require_volume(chosen)
         if pipeline is not None:
             with tool_errors():
                 spec = _saved(config, pipeline)
@@ -830,6 +821,35 @@ def create_server(
             )
         return await call("environment", request)
 
+    def resolve_target(name: str) -> TargetConfig:
+        """A target of ico.toml that can take runs: with a storage, or with
+        the volume of the current order."""
+        by_name = {t.name: t for t in config.targets}
+        chosen = by_name.get(name)
+        if chosen is None:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": f"no target {name!r} in ico.toml; "
+                        f"targets: {', '.join(sorted(by_name)) or 'none'}",
+                    }
+                )
+            )
+        return chosen
+
+    def require_volume(target: TargetConfig) -> None:
+        if target.storage is None and targets.volume(config, target.name) is None:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "no_volume",
+                        "message": f"target {target.name!r} has no volume: the order's "
+                        "volume is its storage; ask the human, then volume_up",
+                    }
+                )
+            )
+
     async def asset_request(
         ids: list[str] | None,
         pipeline: str | None,
@@ -892,20 +912,9 @@ def create_server(
         `target` fetches them onto a target's volume instead (after a
         remote run ended with `missing_assets`): a prefetch job there,
         sized as an upper bound (what the volume already has is skipped)."""
-        chosen = None
-        if target is not None:
-            by_name = {t.name: t for t in config.targets}
-            chosen = by_name.get(target)
-            if chosen is None:
-                raise ToolError(
-                    json.dumps(
-                        {
-                            "code": "bad_request",
-                            "message": f"no target {target!r} in ico.toml; "
-                            f"targets: {', '.join(sorted(by_name)) or 'none'}",
-                        }
-                    )
-                )
+        chosen = resolve_target(target) if target is not None else None
+        if chosen is not None:
+            require_volume(chosen)
         found = await asset_request(ids, pipeline, spec, params)
         items = cast(list[JsonObject], found["items"])
         if found.get("manifest") is None:
@@ -972,6 +981,73 @@ def create_server(
             "assets": list[JsonValue](wanted),
             "dashboard": board.url,
         }
+
+    async def remote_call(method: str, params: JsonObject) -> JsonObject:
+        """A request to a kernel of remote runs (it has the RunPod keys and
+        loads no operators)."""
+        async with KernelClient(config, [], remote=True) as remote:
+            with tool_errors():
+                await remote.start()
+                return cast(JsonObject, await remote.request(method, params))
+
+    def target_params(target: TargetConfig) -> JsonObject:
+        return {"name": target.name, "endpoint": target.endpoint}
+
+    @server.tool(annotations=WRITES)
+    async def volume_up(
+        target: str, datacenter: str, size_gb: int = 150, confirm: bool = False
+    ) -> dict[str, JsonValue]:
+        """Create a network volume for an order and attach it to the
+        target's endpoint (its workers then run in that datacenter). The
+        volume is the storage of the target's runs and holds the assets
+        (then fetch_assets(target=...)). It costs money while it exists
+        (about $0.07 per GB and month): ask the human, then call with
+        confirm=true; volume_down when the order is done."""
+        chosen = resolve_target(target)
+        current = targets.volume(config, chosen.name)
+        if current is not None:
+            return {"state": "exists", "volume": current}
+        if not confirm:
+            return {
+                "state": "needs_confirmation",
+                "message": f"a {size_gb} GB volume in {datacenter} for {chosen.name} "
+                f"(about ${size_gb * 0.07:.2f} a month while it exists): ask the "
+                "human, then call again with confirm=true",
+            }
+        created = await remote_call(
+            "volume_up",
+            {
+                "target": target_params(chosen),
+                "size": size_gb,
+                "datacenter": datacenter,
+            },
+        )
+        targets.set_volume(config, chosen.name, created)
+        return {"state": "up", "volume": created}
+
+    @server.tool(annotations=WRITES)
+    async def volume_down(target: str, confirm: bool = False) -> dict[str, JsonValue]:
+        """Detach the order's volume from the target's endpoint and delete
+        it with everything on it (assets, inputs, outputs on the volume;
+        the outputs of runs were already brought back into runs/). Ask the
+        human, then call with confirm=true."""
+        chosen = resolve_target(target)
+        current = targets.volume(config, chosen.name)
+        if current is None:
+            return {"state": "none"}
+        if not confirm:
+            return {
+                "state": "needs_confirmation",
+                "volume": current,
+                "message": "deleting the volume deletes the assets on it (fetching "
+                "them again takes 15-20 minutes): ask the human, then call again "
+                "with confirm=true",
+            }
+        await remote_call(
+            "volume_down", {"target": target_params(chosen), "volume": current}
+        )
+        targets.set_volume(config, chosen.name, None)
+        return {"state": "down", "deleted": current}
 
     @server.tool(annotations=READ_ONLY)
     async def server_status() -> dict[str, JsonValue]:
