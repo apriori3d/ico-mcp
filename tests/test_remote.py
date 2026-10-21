@@ -507,3 +507,25 @@ async def test_an_order_brings_its_volume_up_and_down(
     assert kept["state"] == "needs_confirmation"
     assert down["state"] == "down" and rest.volumes == {}
     assert ("PATCH", "/endpoints/ep", {"networkVolumeIds": []}) in rest.calls
+
+
+async def test_a_failed_upload_is_a_storage_error(
+    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RUNPOD_API_KEY", KEY)
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a file where the storage needs a directory")
+    repo = tmp_path / "repo"
+    make_repo(repo, f'[targets.gpu]\nendpoint = "ep"\nstorage = "file://{blocked}"\n')
+    source = tmp_path / "notes.txt"
+    source.write_text("hello")
+    async with Client(create_server(load_config(repo))) as client:
+        started = await call(
+            client, "run", spec={"kind": "op", "op": "shout@1"}, input=str(source),
+            target="gpu", wait=False,
+        )  # fmt: skip
+        failed = await finish(client, started["run_id"])
+
+    error = failed["kernel_error"]
+    assert error["code"] == "storage_error"
+    assert error["message"].startswith("uploading the inputs: ")

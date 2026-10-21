@@ -63,8 +63,10 @@ def run_remote(
         values = _upload(
             params.get("params"), f"{storage}/runs/{run_id}/in", staged, budget
         )
-    except (OSError, ValueError, ImportError) as e:
-        raise KernelError("storage_error", f"uploading the inputs: {e}") from None
+    except Exception as e:  # botocore raises its own types, not OSError
+        raise KernelError(
+            "storage_error", f"uploading the inputs: {type(e).__name__}: {e}"
+        ) from None
     out_uri = f"{storage}/runs/{run_id}/out"
     job = Job(
         spec=cast(JsonObject, params["spec"]),
@@ -113,9 +115,11 @@ def run_remote(
         result["outputs"] = _download(
             result.get("outputs"), out_uri, runs_dir / run_id / "out"
         )
-    except (OSError, ValueError, ImportError) as e:
+    except Exception as e:  # botocore raises its own types, not OSError
         raise KernelError(
-            "storage_error", f"downloading the outputs: {e}", {"result": result}
+            "storage_error",
+            f"downloading the outputs: {type(e).__name__}: {e}",
+            {"result": result},
         ) from None
     result["target"] = str(target["name"])
     if staged:
