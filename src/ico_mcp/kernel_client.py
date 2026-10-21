@@ -35,8 +35,11 @@ REMOTE_ENV = (
     "AWS_REGION",
     "ICO_RUNPOD_API",
     "ICO_RUNPOD_REST",
+    "HTTPS_PROXY",
+    "NO_PROXY",
 )
-"""Keys of remote runs (and the RunPod API root, for tests): only the
+"""Keys of remote runs (and the RunPod API root, for tests), and a proxy for
+its uploads (some networks stall large uploads to the storage): only the
 kernel of a remote run gets them; it runs no domain code."""
 
 

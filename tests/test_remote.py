@@ -260,10 +260,14 @@ def test_the_job_carries_the_code_it_uses(remote: Config) -> None:
     assert absolute_imports(code, "domain") == {"text", "frames", "video"}
 
 
-def test_keys_reach_only_remote_kernels(remote: Config) -> None:
+def test_keys_reach_only_remote_kernels(
+    remote: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8899")
     local = KernelClient(remote)._env()  # pyright: ignore[reportPrivateUsage]
     far = KernelClient(remote, remote=True)._env()  # pyright: ignore[reportPrivateUsage]
     assert "RUNPOD_API_KEY" not in local and far["RUNPOD_API_KEY"] == KEY
+    assert "HTTPS_PROXY" not in local and far["HTTPS_PROXY"] == "http://127.0.0.1:8899"
 
 
 def test_targets_in_ico_toml(make_repo: MakeRepo, tmp_path: Path) -> None:
