@@ -381,6 +381,7 @@ class Jobs:
             params=cast(JsonObject | None, params.get("params")),
             drafts=cast(JsonObject | None, drafts),
             profile=profiles.trace(profile) if profile is not None else None,
+            resources=profiles.resources(profile) if profile is not None else None,
         )
         job.finished.set()
         for wait in job.samples.values():

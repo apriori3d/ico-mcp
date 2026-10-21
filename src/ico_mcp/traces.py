@@ -31,6 +31,7 @@ def write(
     params: JsonObject | None = None,
     drafts: JsonObject | None = None,
     profile: list[JsonValue] | None = None,
+    resources: list[JsonValue] | None = None,
 ) -> Path:
     """Append a trace line for one run; ``started`` must be timezone-aware.
 
@@ -38,7 +39,8 @@ def write(
     name of a saved pipeline run by name; ``params`` the values given for
     its parameters; ``drafts`` the fingerprint of each draft operator's
     module (which draft code the run used); ``profile`` the profile of
-    every node of a profiled run (``profiles.trace``).
+    every node of a profiled run (``profiles.trace``); ``resources`` its
+    resource rows (``profiles.resources``).
     """
     started = started.astimezone(UTC)
     trace: JsonObject = {
@@ -56,6 +58,8 @@ def write(
         "progress": progress,
         "profile": profile,
     }
+    if resources:
+        trace["resources"] = resources
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{started:%Y-%m-%d}.jsonl"
     with path.open("a", encoding="utf-8") as f:

@@ -292,3 +292,44 @@ async def test_a_large_fetch_needs_the_humans_word(domain: Config) -> None:
     assert asked["state"] == "needs_confirmation" and asked["to_fetch"] == 3 * 10**9
     assert "ask the human" in asked["message"]
     assert searched["cards"] == []  # the built-in fetch is not a domain operator
+
+
+async def test_a_profile_shows_the_resources(domain: Config) -> None:
+    import json
+
+    from mcp.client import Client
+
+    from ico_mcp.server import create_server
+
+    async with Client(create_server(domain)) as client:
+        ran = await call(client, "run", spec=encode(), input="hi", profile=True)
+
+    [row] = ran["profile"]["resources"]
+    assert (row["resource"], row["process"], row["uses"], row["loads"], row["reloads"]) == (
+        "demo.encoder@1", "main", "1", "1", "0",
+    )  # fmt: skip
+    [trace] = [
+        json.loads(line)
+        for file in sorted(domain.runs_dir.glob("*.jsonl"))
+        for line in file.read_text().splitlines()
+    ]
+    assert trace["resources"][0]["ref"] == "demo.encoder@1"
+    assert trace["resources"][0]["loads"] == 1
+
+
+async def test_reload_reads_ico_toml_again(domain: Config) -> None:
+    from mcp.client import Client
+
+    from ico_mcp.server import create_server
+
+    toml = domain.root / "ico.toml"
+    async with Client(create_server(domain)) as client:
+        toml.write_text(toml.read_text().replace('ram = "2GB"', 'ram = "3GB"'))
+        first = await call(client, "reload")
+        env = await call(client, "environment")
+        toml.write_text("board = { port = 4321 }\n" + toml.read_text())  # top level
+        second = await call(client, "reload")
+
+    assert first["config"] == {"changed": ["resources"], "reconnect": []}
+    assert env["resources"]["ram"] == 3 * 10**9
+    assert second["config"] == {"changed": ["board"], "reconnect": ["board"]}
