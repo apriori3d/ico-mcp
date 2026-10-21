@@ -127,6 +127,7 @@ The server serves the domain repository given by `--root`, else the nearest
 | `crystallize` / `wait_crystallize` | a pull request that makes drafts stable; a long gate goes on in the background |
 | `reload` | restart the kernel after a merge or manual edits |
 | `environment` | Python, PATH, packages (and duplicate builds), binaries of `bin:` caps, assets and resource budgets, as operators see them |
+| `volume_up` / `volume_down` | the network volume of an order on a RunPod target (the storage of its runs and of its assets); both ask for `confirm=true` |
 | `assets_status` / `fetch_assets` | the state of the assets (`assets.toml`) a pipeline needs; download them as a run, above 2 GB only with `confirm=true` (the human's word) |
 | `server_status` | the code this server process runs; `stale` when the code on disk is newer (reconnect the server) |
 

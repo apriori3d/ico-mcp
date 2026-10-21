@@ -520,6 +520,13 @@ class VideoRef:
   cancel loses the outputs so far. First run a small input locally; a
   remote run costs GPU time from the worker's start (model loading
   included).
+  A target without `storage` in `ico.toml` works on the network volume of
+  the current order: `volume_up(target, datacenter)` creates it and
+  attaches it to the endpoint (it costs money while it exists: ask the
+  human, `confirm=true`), and it is the storage of the target's runs;
+  `volume_down(target)` deletes it with everything on it when the order
+  is done (the outputs are already in `runs/`). Without a volume such a
+  target answers `no_volume`.
   Assets live on the target's volume, not here: a remote run whose assets
   are not there ends at once with `missing_assets` (ids, sizes). Tell the
   human, and on their word `fetch_assets(target=..., pipeline=...)`

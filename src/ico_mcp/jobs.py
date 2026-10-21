@@ -28,7 +28,7 @@ from ico.tools.board import BoardRun, BoardRuns
 from ico.tools.board.runs import ProgressSnapshot
 from ico.tools.profiler import ProfileSnapshot
 
-from ico_mcp import profiles, traces
+from ico_mcp import profiles, targets, traces
 from ico_mcp.config import Config, TargetConfig
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.protocol import JsonObject, JsonValue, KernelError
@@ -335,6 +335,7 @@ class Jobs:
                     "endpoint": target.endpoint,
                     "storage": target.storage,
                     "execution_timeout": target.execution_timeout,
+                    "volume": targets.volume(self.config, target.name),
                 },
             }
             job.kernel.modules = []  # the code goes to the target

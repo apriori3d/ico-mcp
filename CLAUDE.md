@@ -231,6 +231,10 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     and the trace carry the resource rows (main and worker processes;
     needs the ico change); `reload` reads `ico.toml` again and lists what
     applies now and what needs a reconnect.
+37. [x] Network volumes per order (needs apriori3d/ico#86): `volume_up` /
+    `volume_down` (confirm), the volume of a target in
+    `runs/targets/<name>.json`, a target without `storage` uses it as its
+    storage (`no_volume` otherwise), runs carry `Job.volume`.
 
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):

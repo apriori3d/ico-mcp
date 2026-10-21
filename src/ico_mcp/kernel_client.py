@@ -34,6 +34,7 @@ REMOTE_ENV = (
     "AWS_ENDPOINT_URL_S3",
     "AWS_REGION",
     "ICO_RUNPOD_API",
+    "ICO_RUNPOD_REST",
 )
 """Keys of remote runs (and the RunPod API root, for tests): only the
 kernel of a remote run gets them; it runs no domain code."""
