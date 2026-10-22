@@ -120,6 +120,7 @@ Never `ref`, never a function name: only `op` with `name@version`.
 | `batcher` | – | `batch_size` (int), `drop_last` (bool) | group stream items into batches |
 | `process` | 1 (body) | `num_iterations` (int) | apply the body that many times |
 | `process` | 2 (body, until) | `max_iterations` (int), `on_limit` (`return` / `raise`) | apply the body until the predicate is true on its output |
+| `fold` | 2 (source, step) | – | `C → C`: for each item of the source (an op called with `null` that returns an iterator) the state becomes `step([item, state])`; the step is an op or `seq` over `tuple[I, C] → C`, e.g. a training step over (batch, model) |
 | `progress` | – | `total` (number; omit when unknown) | count the items passing by (dashboard, MCP progress) |
 | `identity` | – | – | pass items through |
 | `tap` | 1 | – | run the child for its side effect (files) and pass the **input** on: `I → I` |
