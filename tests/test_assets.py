@@ -333,3 +333,22 @@ async def test_reload_reads_ico_toml_again(domain: Config) -> None:
     assert first["config"] == {"changed": ["resources"], "reconnect": []}
     assert env["resources"]["ram"] == 3 * 10**9
     assert second["config"] == {"changed": ["board"], "reconnect": ["board"]}
+
+
+async def test_run_status_of_a_run_whose_resources_have_fields(domain: Config) -> None:
+    """Resource fields reach clients as JSON: a tuple in a result made MCP
+    refuse run_status and wait_run of such runs (the Wan2.2 experts)."""
+    from mcp.client import Client
+
+    from ico_mcp.server import create_server
+
+    spec = encode(encoder={"ref": "demo.encoder@1", "params": {"weights": "table"}})
+    async with Client(create_server(domain)) as client:
+        ran = await call(client, "run", spec=spec, input="hi", profile=True)
+        status = await call(client, "run_status", run_id=ran["run_id"])
+        waited = await call(client, "wait_run", run_id=ran["run_id"])
+
+    for result in (ran, status["result"], waited["result"]):
+        [row] = result["profile"]["resources"]
+        assert row["resource"] == "demo.encoder@1 (weights=table)"
+        assert (row["ref"], row["args"]) == ("demo.encoder@1", [["weights", "table"]])
