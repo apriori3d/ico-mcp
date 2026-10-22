@@ -22,17 +22,17 @@ boundary by reference (paths).
 ## How it is built
 
 ```mermaid
-flowchart LR
-  A["agent"] -- "MCP tools" --> S["ico-mcp server"]
-  S --- B["Live Board"]
+flowchart TB
+  A["agent"] -- "MCP tools" --> S["ico-mcp server, Live Board"]
   S --> K["main kernel: registry, cards, validate, plans"]
   S --> J["a kernel per run"]
-  S --> X["remote kernel"] --> G["RunPod GPU"]
+  S --> X["remote kernel: RunPod GPU"]
+  K -- "imports operators" --> D
+  J -- "imports operators" --> D
   S -- "crystallize: pull request" --> D
   subgraph D["domain repository"]
-    P["video: stable operators"]
-    Q["video_draft: drafts"]
-    L["pipelines, assets"]
+    direction LR
+    P["video: stable"] ~~~ Q["video_draft: drafts"] ~~~ L["pipelines, assets"]
   end
 ```
 
