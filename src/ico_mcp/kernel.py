@@ -12,6 +12,10 @@ Notifications (no ``id``), sent while a ``run`` request is in progress::
     {"method": "progress", "params": {"request": <id>, "snapshot": {...}}}
     {"method": "profile", "params": {"request": <id>, "snapshot": {...}}}
 
+A run on a target also bridges ``{"method": "queue", "params": {"request":
+<id>, "status": "IN_QUEUE"}}`` when the provider's status of the job
+changes (``IN_QUEUE``: waiting for a worker).
+
 ``plan`` is the ``plan_view`` of the built spec (the console plan as rows),
 sent first, unless the spec does not build. ``progress`` carries a
 ``JsonProgressTool`` snapshot; every progress node is first reported with
