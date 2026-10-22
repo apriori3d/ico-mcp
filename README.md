@@ -85,18 +85,16 @@ used them.
 
 ## Setup
 
-Requires Python 3.11 or 3.12, [uv](https://docs.astral.sh/uv/), ICO checked
-out next to this repository (`../ico`), and [gh](https://cli.github.com)
-for `crystallize`.
+Requires Python 3.11 or 3.12 and [uv](https://docs.astral.sh/uv/);
+[gh](https://cli.github.com) for `crystallize`. Create a domain:
 
 ```bash
-uv sync
-make ci
-uv run ico-mcp init /abs/path/to/ico-mcp-video --package video
+uvx ico-mcp init /abs/path/to/ico-mcp-video --package video
 ```
 
-Add the domain's dependencies to its `pyproject.toml`, `uv sync` there, and
-connect it:
+It depends on `ico-mcp` and [`apriori-ico`](https://pypi.org/project/apriori-ico/)
+(ICO). Add the domain's dependencies to its `pyproject.toml`, `uv sync`
+there, and connect it:
 
 ```bash
 claude mcp add video -- uv run --project /abs/path/to/ico-mcp-video ico-mcp --root /abs/path/to/ico-mcp-video
@@ -105,9 +103,13 @@ claude mcp add video -- uv run --project /abs/path/to/ico-mcp-video ico-mcp --ro
 In the Claude desktop app, put the same server into
 `claude_desktop_config.json` with the absolute path of `uv`.
 
-Design notes: [docs/design/ico-mcp.md](docs/design/ico-mcp.md). The guide
-for agents: [src/ico_mcp/agent-guide.md](src/ico_mcp/agent-guide.md).
+For development, check out ICO next to this repository (`../ico`) and run
+`uv sync` and `make ci` here; `ico-mcp init` from this checkout makes a
+domain that uses both checkouts.
+
+Design notes: [docs/design/ico-mcp.md](https://github.com/apriori3d/ico-mcp/blob/main/docs/design/ico-mcp.md). The guide
+for agents: [src/ico_mcp/agent-guide.md](https://github.com/apriori3d/ico-mcp/blob/main/src/ico_mcp/agent-guide.md).
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE).
+Apache License 2.0, see [LICENSE](https://github.com/apriori3d/ico-mcp/blob/main/LICENSE).

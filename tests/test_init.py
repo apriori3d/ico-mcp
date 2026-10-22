@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,21 @@ def test_editable_sources_point_at_the_checkouts(tmp_path: Path) -> None:
         if "path =" in line:
             path = line.split('path = "')[1].split('"')[0]
             assert (root / path / "pyproject.toml").is_file()
+
+
+def test_installed_from_pypi_needs_no_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_checkout(module_file: Path, project: str) -> Path | None:
+        return None
+
+    monkeypatch.setattr(scaffold, "_checkout", no_checkout)
+    scaffold.init(tmp_path)
+
+    pyproject = (tmp_path / "pyproject.toml").read_text()
+    assert '"ico-mcp", "apriori-ico"' in pyproject
+    assert "[tool.uv.sources]" not in pyproject and "git" not in pyproject
+    assert tomllib.loads(pyproject)["tool"]["uv"] == {"package": False}
 
 
 def test_find_root_walks_up(tmp_path: Path) -> None:
