@@ -4,20 +4,26 @@
 ![Python](https://img.shields.io/badge/Python-3.11%E2%80%933.12-blue?logo=python)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-An MCP server on top of [ICO](https://github.com/apriori3d/ico) that makes
-an agent's pipeline work systematic. Instead of writing a new script for
-every task, the agent composes pipelines from a domain's typed operators,
-reuses what works and turns it into reviewed code.
+An MCP server on top of [ICO](https://github.com/apriori3d/ico) with which
+an agent builds data pipelines from its own operators. The agent writes
+operators, small typed Python functions, and composes them into pipelines
+as JSON specs; the server checks, runs and profiles them. Operators that
+proved themselves in runs become the domain's stable code through a pull
+request a human reviews, and the next task starts from them instead of a
+blank script.
 
-- **Systematic.** Pipelines are built from registered operators and
-  type-checked before they run. New operators start as drafts and become
-  stable code through a pull request.
-- **Fewer tokens.** Operators are not MCP tools: the tool set is fixed, the
-  agent reads compact cards instead of source, and a working pipeline is
-  saved and run by name with parameters.
-- **Profiling and debugging.** The Live Board shows the plan and the
-  progress of every node, the profiler their time and the models in memory,
-  `sample_run` what flows out of a node during a run.
+- **Work accumulates.** Each task adds operators and pipelines to the
+  domain's library instead of one-off scripts.
+- **Errors before the run.** Types are checked at every link before
+  anything runs, so a broken pipeline does not burn GPU time.
+- **Fewer tokens.** The agent finds operators as compact cards by input and
+  output type instead of reading code, runs saved pipelines by name, and
+  gets data back as paths; long runs go on in the background.
+- **Visible runs.** The Live Board shows the plan and the progress of every
+  node, the profiler where time and memory go, `sample_run` what flows out
+  of a node; a run can be cancelled between items.
+- **Local or GPU.** The same pipeline runs here or on a RunPod GPU: the job
+  carries the operators' code, model weights are pinned assets.
 
 ```
 search_operators → validate → run → save_pipeline → crystallize → PR
