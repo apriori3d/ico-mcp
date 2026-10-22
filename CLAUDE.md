@@ -236,6 +236,18 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
     `runs/targets/<name>.json`, a target without `storage` uses it as its
     storage (`no_volume` otherwise), runs carry `Job.volume`.
 
+Findings of the first runs on RunPod (`animate_loop` on a 48 GB GPU). One
+PR each:
+
+38. [ ] The plan of a remote run at once: the main kernel builds it from
+    the spec when the run starts, so the dashboard shows the plan (with
+    its progress nodes at zero) while the job waits for a GPU; today it
+    comes with the worker's first events, and a 30-minute wait for a GPU
+    showed an empty card. The same for the prefetch job of `fetch_assets`.
+39. [ ] `assets_status` / `fetch_assets` of a saved pipeline without
+    `params` take the pipeline's `check_params`; today a required
+    parameter (`out_dir`) fails them.
+
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):
 
