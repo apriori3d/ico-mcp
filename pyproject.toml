@@ -8,7 +8,7 @@ authors = [{ name = "Sergei Shumilin", email = "shumilinss@gmail.com" }]
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "anyio>=4.15",
-    "ico",
+    "apriori-ico",
     "mcp>=2.3.0",
     # Type-checks proposed operators at run time (propose_operator).
     "pyright>=1.1.414",
@@ -25,7 +25,7 @@ dev = [
 
 [tool.uv.sources]
 # Development: the sibling ICO checkout, editable.
-ico = { path = "../ico", editable = true }
+apriori-ico = { path = "../ico", editable = true }
 
 [build-system]
 requires = ["hatchling"]
