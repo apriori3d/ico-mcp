@@ -239,7 +239,7 @@ the `ico-mcp-video` repository; this copy is frozen). ICO items are in the
 Findings of the first runs on RunPod (`animate_loop` on a 48 GB GPU). One
 PR each:
 
-38. [ ] The plan of a remote run at once: the main kernel builds it from
+38. [x] The plan of a remote run at once: the main kernel builds it from
     the spec when the run starts, so the dashboard shows the plan (with
     its progress nodes at zero) while the job waits for a GPU; today it
     comes with the worker's first events, and a 30-minute wait for a GPU
