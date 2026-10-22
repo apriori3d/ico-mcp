@@ -35,6 +35,7 @@ REMOTE_ENV = (
     "AWS_REGION",
     "ICO_RUNPOD_API",
     "ICO_RUNPOD_REST",
+    "ICO_RUNPOD_REST_V2",
     "HTTPS_PROXY",
     "NO_PROXY",
 )

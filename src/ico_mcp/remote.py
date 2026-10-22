@@ -18,7 +18,7 @@ from typing import cast
 from ico.core.runtime.cancel import IcoCancelToken
 from ico.remote import FetchJob, Job, Package, RunPod
 from ico.remote.runpod import API
-from ico.remote.runpod_api import REST_API, RunPodApi, RunPodApiError, Volume
+from ico.remote.runpod_api import RunPodApi, RunPodApiError, Volume
 from ico.remote.storage import storage_for
 
 from ico_mcp.protocol import ERROR_CODES, JsonObject, JsonValue, KernelError
@@ -26,7 +26,6 @@ from ico_mcp.protocol import ERROR_CODES, JsonObject, JsonValue, KernelError
 UPLOAD_LIMIT = 5 * 10**9
 """Bytes of local inputs a remote run uploads at most."""
 API_ENV = "ICO_RUNPOD_API"
-REST_ENV = "ICO_RUNPOD_REST"
 BRIDGED = ("plan", "progress", "profile", "sample")
 
 Notify = Callable[[str, JsonObject], None]
@@ -215,7 +214,7 @@ def volume_down(params: JsonObject) -> JsonObject:
 
 
 def _api() -> RunPodApi:
-    return RunPodApi(base_url=os.environ.get(REST_ENV) or REST_API)
+    return RunPodApi.from_env()
 
 
 def _volume(target: JsonObject) -> Volume | None:

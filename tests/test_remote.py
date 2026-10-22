@@ -384,7 +384,8 @@ async def test_missing_assets_then_a_prefetch_on_the_target(
 
 
 class FakeRest:
-    """/networkvolumes and /endpoints/<id> of RunPod's REST API."""
+    """/networkvolumes and /endpoints/<id> of RunPod's REST API (v1), and
+    /serverless/<id> of v2 (where a volume is detached)."""
 
     def __init__(self) -> None:
         self.volumes: dict[str, dict[str, Any]] = {}
@@ -409,13 +410,14 @@ class FakeRest:
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+        root = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.url, self.url_v2 = f"{root}/v1", f"{root}/v2"
 
     def serve(self, request: BaseHTTPRequestHandler, method: str) -> None:
         assert request.headers["authorization"] == f"Bearer {KEY}"
         length = int(request.headers.get("content-length") or 0)
         body: Any = json.loads(request.rfile.read(length)) if length else None
-        path = request.path.removeprefix("/v1")
+        path = request.path.removeprefix("/v1").removeprefix("/v2")
         self.calls.append((method, path, body))
         reply: Any = {}
         if path == "/networkvolumes" and method == "POST":
@@ -439,6 +441,7 @@ def ordered(
     monkeypatch.setenv("RUNPOD_API_KEY", KEY)
     monkeypatch.setenv("ICO_RUNPOD_API", runpod.url)
     monkeypatch.setenv("ICO_RUNPOD_REST", rest.url)
+    monkeypatch.setenv("ICO_RUNPOD_REST_V2", rest.url_v2)
     monkeypatch.setenv("ICO_WORKDIRS", str(tmp_path / "volume" / "jobs"))
     monkeypatch.setenv(
         "ICO_VOLUME_ROOT", str(tmp_path / "volume")
@@ -510,7 +513,7 @@ async def test_an_order_brings_its_volume_up_and_down(
     )
     assert kept["state"] == "needs_confirmation"
     assert down["state"] == "down" and rest.volumes == {}
-    assert ("PATCH", "/endpoints/ep", {"networkVolumeIds": []}) in rest.calls
+    assert ("PATCH", "/serverless/ep", {"mounts": {"network": []}}) in rest.calls
 
 
 async def test_a_failed_upload_is_a_storage_error(
