@@ -11,8 +11,8 @@ operators that are missing as drafts, and turns the drafts that proved
 useful into stable operators through a pull request that a human reviews.
 
 ```
-search_operators → validate → run ─┬─ works ─→ save_pipeline → crystallize → PR → merge → reload
-                                   └─ step missing → propose_operator / propose_types
+search_operators → validate → run → save_pipeline → crystallize → PR
+       a step is missing → propose_operator, propose_types
 ```
 
 Operators are not MCP tools: the tool set is fixed, and the agent finds
@@ -24,11 +24,12 @@ boundary by reference (paths).
 ```mermaid
 flowchart TB
   A["agent"] -- "MCP tools" --> S["ico-mcp server, Live Board"]
-  S --> K["main kernel: registry, cards, validate, plans"]
-  S --> J["a kernel per run"]
-  S --> X["remote kernel: RunPod GPU"]
-  K -- "imports operators" --> D
-  J -- "imports operators" --> D
+  S --> kernels
+  subgraph kernels["kernels"]
+    direction LR
+    K["main: catalog, validate, plans"] ~~~ J["one per run"] ~~~ X["remote: RunPod GPU"]
+  end
+  kernels -- "operator code" --> D
   S -- "crystallize: pull request" --> D
   subgraph D["domain repository"]
     direction LR
