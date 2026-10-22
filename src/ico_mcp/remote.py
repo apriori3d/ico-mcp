@@ -27,7 +27,7 @@ from ico_mcp.protocol import ERROR_CODES, JsonObject, JsonValue, KernelError
 UPLOAD_LIMIT = 5 * 10**9
 """Bytes of local inputs a remote run uploads at most."""
 API_ENV = "ICO_RUNPOD_API"
-BRIDGED = ("plan", "progress", "profile", "sample")
+BRIDGED = ("queue", "plan", "progress", "profile", "sample")
 
 Notify = Callable[[str, JsonObject], None]
 
@@ -153,7 +153,9 @@ def fetch_remote(
     try:
         for event in handle.events():
             kind = event.get("event")
-            if kind == "fetch":
+            if kind == "queue":
+                notify("queue", {"status": event.get("status")})
+            elif kind == "fetch":
                 snapshot = fetch_snapshot(
                     str(event.get("asset")),
                     float(cast(float, event.get("done") or 0)),

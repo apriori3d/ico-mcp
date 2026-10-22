@@ -293,6 +293,8 @@ class Jobs:
             method = message.get("method")
             if method == "plan" and isinstance(plan, dict):
                 job.board.plan = cast(PlanView, plan)
+            elif method == "queue" and target is not None:
+                job.board.summary = _queue_line(target.name, str(body.get("status")))
             elif method == "progress" and isinstance(snapshot, dict):
                 job.board.progress(cast(ProgressSnapshot, snapshot))
                 for listener in list(job.listeners):
@@ -436,6 +438,16 @@ class Jobs:
         ]
         for run_id in gone:
             del self._jobs[run_id]
+
+
+def _queue_line(target: str, status: str) -> str:
+    """The card's line for a remote job's status at its provider."""
+    if status == "IN_QUEUE":
+        since = datetime.now(UTC).strftime("%H:%M")
+        return f"waiting for a worker on {target} since {since} UTC"
+    if status == "IN_PROGRESS":
+        return f"running on {target}"
+    return f"{target}: {status}"
 
 
 def _title(spec: JsonObject, pipeline: str | None, values: JsonObject | None) -> str:

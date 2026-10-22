@@ -220,8 +220,10 @@ async def test_the_plan_shows_while_the_job_waits_for_a_gpu(
         runpod.gpu.set()
         done = await finish(client, started["run_id"])
 
-    # The plan comes from the main kernel, before any event of the target.
+    # The plan comes from the main kernel, before any event of the target,
+    # and the card says that the job waits for a worker.
     assert waiting["state"] == "running" and waiting["has_plan"]
+    assert waiting["summary"].startswith("waiting for a worker on gpu since ")
     assert [j.status for j in runpod.jobs.values()] == ["COMPLETED"]
     assert done["state"] == "done" and done["result"]["outputs"] == [2]
 
