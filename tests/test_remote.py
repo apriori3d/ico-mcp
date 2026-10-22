@@ -69,6 +69,9 @@ class FakeRunPod:
 
         self.handler = handler
         self.jobs: dict[str, FakeJob] = {}
+        self.gpu = threading.Event()
+        """Cleared: jobs wait in the queue (no GPU free)."""
+        self.gpu.set()
         self.ids = itertools.count(1)
         fake = self
 
@@ -119,6 +122,8 @@ class FakeRunPod:
         request.wfile.write(data)
 
     def work(self, id: str, job: FakeJob) -> None:
+        self.gpu.wait()
+
         async def main() -> None:
             job.loop = asyncio.get_running_loop()
             job.task = asyncio.current_task()
@@ -134,19 +139,28 @@ class FakeRunPod:
 
 
 @pytest.fixture
-def remote(
-    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[Config]:
+def runpod() -> Iterator[FakeRunPod]:
     fake = FakeRunPod()
+    yield fake
+    fake.gpu.set()
+    fake.server.shutdown()
+
+
+@pytest.fixture
+def remote(
+    make_repo: MakeRepo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runpod: FakeRunPod,
+) -> Iterator[Config]:
     monkeypatch.setenv("RUNPOD_API_KEY", KEY)
-    monkeypatch.setenv("ICO_RUNPOD_API", fake.url)
+    monkeypatch.setenv("ICO_RUNPOD_API", runpod.url)
     monkeypatch.setenv("ICO_WORKDIRS", str(tmp_path / "volume" / "jobs"))
     storage = f"file://{tmp_path / 'bucket'}"
     repo = tmp_path / "repo"
     make_repo(repo, f'[targets.gpu]\nendpoint = "ep"\nstorage = "{storage}"\n')
     (repo / "domain_draft" / "files.py").write_text(textwrap.dedent(FILES))
     yield load_config(repo)
-    fake.server.shutdown()
 
 
 def text(result: CallToolResult) -> str:
@@ -191,6 +205,25 @@ async def test_a_run_goes_to_the_target(remote: Config) -> None:
     assert done["result"]["target"] == "gpu"
     assert done["title"] == "count_words@1, shout@1 @ gpu"
     assert board["url"]
+
+
+async def test_the_plan_shows_while_the_job_waits_for_a_gpu(
+    remote: Config, runpod: FakeRunPod
+) -> None:
+    runpod.gpu.clear()
+    async with Client(create_server(remote)) as client:
+        started = await call(
+            client, "run", spec=seq("shout@1", "count_words@1"), input="a b",
+            target="gpu", wait=False,
+        )  # fmt: skip
+        waiting = await call(client, "wait_run", run_id=started["run_id"], timeout=2)
+        runpod.gpu.set()
+        done = await finish(client, started["run_id"])
+
+    # The plan comes from the main kernel, before any event of the target.
+    assert waiting["state"] == "running" and waiting["has_plan"]
+    assert [j.status for j in runpod.jobs.values()] == ["COMPLETED"]
+    assert done["state"] == "done" and done["result"]["outputs"] == [2]
 
 
 async def test_files_go_up_and_outputs_come_back(
@@ -333,7 +366,7 @@ def serve_files(files: dict[str, bytes]) -> ThreadingHTTPServer:
 
 
 async def test_missing_assets_then_a_prefetch_on_the_target(
-    remote: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    remote: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runpod: FakeRunPod
 ) -> None:
     import hashlib
 
@@ -356,7 +389,10 @@ async def test_missing_assets_then_a_prefetch_on_the_target(
             client, "run", spec=spec, input="> ", target="gpu", wait=False
         )
         failed = await finish(client, first["run_id"])
+        runpod.gpu.clear()
         fetching = await call(client, "fetch_assets", spec=spec, target="gpu")
+        queued = await call(client, "run_status", run_id=fetching["run_id"])
+        runpod.gpu.set()
         fetched = await finish(client, fetching["run_id"])
         again = await call(
             client, "run", spec=spec, input="> ", target="gpu", wait=False
@@ -374,6 +410,8 @@ async def test_missing_assets_then_a_prefetch_on_the_target(
         ["notes"],
         5,
     )
+    # Every asset at zero while the prefetch waits for a worker.
+    assert [(p["key"], p["done"]) for p in queued["progress"]] == [("fetch.notes", 0)]
     assert fetched["state"] == "done" and fetched["title"] == "fetch assets @ gpu"
     assert fetched["result"]["outputs"][0]["fetched"][0]["state"] == "present"
     assert (volume / "notes" / "notes.txt").read_bytes() == NOTES

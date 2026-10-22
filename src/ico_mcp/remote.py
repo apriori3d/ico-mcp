@@ -21,6 +21,7 @@ from ico.remote.runpod import API
 from ico.remote.runpod_api import RunPodApi, RunPodApiError, Volume
 from ico.remote.storage import storage_for
 
+from ico_mcp.fetching import fetch_snapshot
 from ico_mcp.protocol import ERROR_CODES, JsonObject, JsonValue, KernelError
 
 UPLOAD_LIMIT = 5 * 10**9
@@ -153,18 +154,11 @@ def fetch_remote(
         for event in handle.events():
             kind = event.get("event")
             if kind == "fetch":
-                id = str(event.get("asset"))
-                snapshot: JsonObject = {
-                    "key": f"fetch.{id}",
-                    "label": f"fetch {id} (MB)",
-                    "node": None,
-                    "done": round(float(cast(float, event.get("done") or 0)) / 1e6, 1),
-                    "total": round(
-                        float(cast(float, event.get("total") or 0)) / 1e6, 1
-                    ),
-                    "rate": None,
-                    "eta": None,
-                }
+                snapshot = fetch_snapshot(
+                    str(event.get("asset")),
+                    float(cast(float, event.get("done") or 0)),
+                    float(cast(float, event.get("total") or 0)),
+                )
                 notify("progress", {"snapshot": snapshot})
             elif kind == "result":
                 result = cast(JsonObject, event["result"])

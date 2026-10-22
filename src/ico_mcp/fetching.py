@@ -21,3 +21,17 @@ word): a download of tens of GB can take hours."""
 FETCHABLE = ("missing", "partial", "wrong_size")
 MAX_ITEMS = 101
 """One item per percent, then the summary: all of them in the result."""
+
+
+def fetch_snapshot(id: str, done: float, total: float) -> JsonObject:
+    """The progress snapshot of one asset of a prefetch (bytes shown in
+    MB); the server shows every asset at zero before the job starts."""
+    return {
+        "key": f"fetch.{id}",
+        "label": f"fetch {id} (MB)",
+        "node": None,
+        "done": round(done / 1e6, 1),
+        "total": round(total / 1e6, 1),
+        "rate": None,
+        "eta": None,
+    }

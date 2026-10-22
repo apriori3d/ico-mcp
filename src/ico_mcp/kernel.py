@@ -121,6 +121,7 @@ class Kernel:
             "module_types": self.module_types,
             "environment": self.environment,
             "modules": self.modules,
+            "plan": self.plan,
             "validate": self.validate,
             "assets_status": self.assets_status,
             "volume_up": lambda params: remote.volume_up(params),
@@ -446,14 +447,19 @@ class Kernel:
 
         return send
 
+    def plan(self, params: JsonObject) -> JsonValue:
+        """``{"plan": ...}``: the plan of ``spec`` with the parameter values
+        ``params``, as a run sends it (for a remote run, whose kernel loads
+        no operators); ``null`` when the spec does not build."""
+        return {"plan": _plan(_spec(params), _values(params))}
+
     def _send_plan(
         self, spec: PipelineSpec | NodeSpec, values: JsonObject | None
     ) -> None:
         """Notify the plan of a spec with the run's parameter values; a spec
         that does not build fails in ``run`` with a located error instead."""
-        try:
-            plan = cast(JsonObject, plan_view(build(spec, params=values)))
-        except Exception:
+        plan = _plan(spec, values)
+        if plan is None:
             return
         params: JsonObject = {"request": self.request_id, "plan": plan}
         self.notify({"method": "plan", "params": params})
@@ -546,6 +552,16 @@ def _positive_int(params: JsonObject, key: str, default: int) -> int:
 def _values(params: JsonObject) -> JsonObject | None:
     """The values of the pipeline parameters (``params.params``), if given."""
     return cast(JsonObject | None, _optional(params, "params", dict))
+
+
+def _plan(
+    spec: PipelineSpec | NodeSpec, values: JsonObject | None
+) -> JsonObject | None:
+    """The ``plan_view`` of a spec, or ``None`` when it does not build."""
+    try:
+        return cast(JsonObject, plan_view(build(spec, params=values)))
+    except Exception:
+        return None
 
 
 def _spec(params: JsonObject) -> PipelineSpec | NodeSpec:
