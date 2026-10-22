@@ -21,6 +21,7 @@ from typing import Annotated, cast
 
 import anyio
 from ico.tools.board import BoardRuns, LiveBoard
+from ico.tools.board.runs import ProgressSnapshot
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
@@ -30,7 +31,13 @@ from ico_mcp import drafts, pipelines, scaffold, targets
 from ico_mcp.config import Config, ConfigError, TargetConfig, find_root, load_config
 from ico_mcp.crystallize import Crystallization, Crystallizations
 from ico_mcp.crystallize import crystallize as open_pull_request
-from ico_mcp.fetching import CONFIRM_BYTES, FETCH_SPEC, FETCHABLE, MAX_ITEMS
+from ico_mcp.fetching import (
+    CONFIRM_BYTES,
+    FETCH_SPEC,
+    FETCHABLE,
+    MAX_ITEMS,
+    fetch_snapshot,
+)
 from ico_mcp.jobs import Jobs
 from ico_mcp.kernel_client import KernelClient
 from ico_mcp.progress import ProgressReporter
@@ -966,6 +973,14 @@ def create_server(
             fetch=chosen is not None,
         )
         if chosen is not None:
+            # Every asset at zero until the job starts on a worker (it may
+            # wait minutes for one); the worker's progress replaces them.
+            for item in items:
+                if item["id"] in wanted:
+                    size = float(cast(int, item.get("size") or 0))
+                    job.board.progress(
+                        cast(ProgressSnapshot, fetch_snapshot(str(item["id"]), 0, size))
+                    )
             return {
                 "run_id": job.id,
                 "state": "running",

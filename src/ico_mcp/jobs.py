@@ -339,6 +339,13 @@ class Jobs:
                 },
             }
             job.kernel.modules = []  # the code goes to the target
+            if not params.get("fetch"):
+                # The kernel of a remote run loads no operators and the
+                # target sends the plan once a worker starts; until then
+                # (minutes in a GPU queue) the main kernel's plan shows.
+                plan = await self._plan(params)
+                if plan is not None:
+                    job.board.plan = plan
         async with job.kernel:
             try:
                 await job.kernel.start()
@@ -387,6 +394,20 @@ class Jobs:
         job.finished.set()
         for wait in job.samples.values():
             wait.done.set()
+
+    async def _plan(self, params: JsonObject) -> PlanView | None:
+        """The plan of a run's spec from the catalog, if it builds there."""
+        if self.catalog is None:
+            return None
+        request: JsonObject = {"spec": params["spec"]}
+        if "params" in params:
+            request["params"] = params["params"]
+        try:
+            found = cast(JsonObject, await self.catalog.request("plan", request))
+        except KernelError:
+            return None
+        plan = found.get("plan")
+        return cast(PlanView, plan) if isinstance(plan, dict) else None
 
     async def _modules(self, spec: JsonObject) -> list[str] | None:
         """The operator modules a spec uses, or ``None`` (load everything)
