@@ -25,7 +25,7 @@ def test_init_creates_a_valid_domain(tmp_path: Path) -> None:
         "video_draft" not in (root / ".gitignore").read_text()
     )  # drafts are committed
     pyproject = (root / "pyproject.toml").read_text()
-    assert "ico-mcp = {" in pyproject and "ico = {" in pyproject
+    assert "ico-mcp = {" in pyproject and "apriori-ico = {" in pyproject
     assert f'"{root}"' in (root / ".mcp.json").read_text()
     assert len(written) == 10
 

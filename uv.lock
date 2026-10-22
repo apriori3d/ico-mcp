@@ -29,6 +29,41 @@ wheels = [
 ]
 
 [[package]]
+name = "apriori-ico"
+version = "0.1.0"
+source = { editable = "../ico" }
+dependencies = [
+    { name = "rich" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", marker = "extra == 'remote'", specifier = ">=1.35" },
+    { name = "graphviz", marker = "extra == 'examples'", specifier = ">=0.21,<0.22" },
+    { name = "ipywidgets", marker = "extra == 'notebook'", specifier = ">=8.1.8" },
+    { name = "matplotlib", marker = "extra == 'vision'", specifier = ">=3.10.7" },
+    { name = "pydot", marker = "extra == 'examples'", specifier = ">=4.0.1,<5.0.0" },
+    { name = "rich", specifier = ">=14.2.0" },
+    { name = "skrub", marker = "extra == 'examples'", specifier = ">=0.7.2,<0.8.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
+    { name = "torch", marker = "extra == 'vision'", specifier = ">=2.9.1" },
+    { name = "torchvision", marker = "extra == 'vision'", specifier = ">=0.24.1" },
+]
+provides-extras = ["notebook", "examples", "remote", "vision"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "boto3", specifier = ">=1.35,<2" },
+    { name = "ipykernel", specifier = ">=7.2.0,<8" },
+    { name = "moto", extras = ["s3", "server"], specifier = ">=5.1,<6" },
+    { name = "mypy", specifier = ">=1.18.2,<1.19" },
+    { name = "pyright", specifier = ">=1.1.404,<1.1.409" },
+    { name = "pytest", specifier = ">=8.3.3,<9" },
+    { name = "pytest-xdist", specifier = ">=3.6.1,<4" },
+    { name = "ruff", specifier = ">=0.6.8,<0.7" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -196,47 +231,12 @@ wheels = [
 ]
 
 [[package]]
-name = "ico"
-version = "0.1.0"
-source = { editable = "../ico" }
-dependencies = [
-    { name = "rich" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "boto3", marker = "extra == 'remote'", specifier = ">=1.35" },
-    { name = "graphviz", marker = "extra == 'examples'", specifier = ">=0.21,<0.22" },
-    { name = "ipywidgets", marker = "extra == 'notebook'", specifier = ">=8.1.8" },
-    { name = "matplotlib", marker = "extra == 'vision'", specifier = ">=3.10.7" },
-    { name = "pydot", marker = "extra == 'examples'", specifier = ">=4.0.1,<5.0.0" },
-    { name = "rich", specifier = ">=14.2.0" },
-    { name = "skrub", marker = "extra == 'examples'", specifier = ">=0.7.2,<0.8.0" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
-    { name = "torch", marker = "extra == 'vision'", specifier = ">=2.9.1" },
-    { name = "torchvision", marker = "extra == 'vision'", specifier = ">=0.24.1" },
-]
-provides-extras = ["notebook", "examples", "remote", "vision"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "boto3", specifier = ">=1.35,<2" },
-    { name = "ipykernel", specifier = ">=7.2.0,<8" },
-    { name = "moto", extras = ["s3", "server"], specifier = ">=5.1,<6" },
-    { name = "mypy", specifier = ">=1.18.2,<1.19" },
-    { name = "pyright", specifier = ">=1.1.404,<1.1.409" },
-    { name = "pytest", specifier = ">=8.3.3,<9" },
-    { name = "pytest-xdist", specifier = ">=3.6.1,<4" },
-    { name = "ruff", specifier = ">=0.6.8,<0.7" },
-]
-
-[[package]]
 name = "ico-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
-    { name = "ico" },
+    { name = "apriori-ico" },
     { name = "mcp" },
     { name = "pyright" },
 ]
@@ -250,7 +250,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.15" },
-    { name = "ico", editable = "../ico" },
+    { name = "apriori-ico", editable = "../ico" },
     { name = "mcp", specifier = ">=2.3.0" },
     { name = "pyright", specifier = ">=1.1.414" },
 ]

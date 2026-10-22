@@ -39,7 +39,7 @@ name = "$name"
 version = "0.1.0"
 requires-python = ">=3.11,<3.13"
 # The server and the ICO framework, then what the operators need.
-dependencies = ["ico-mcp", "ico"]
+dependencies = ["ico-mcp", "apriori-ico"]
 
 [dependency-groups]
 dev = ["pytest"]                # the crystallize gate runs the examples
@@ -139,11 +139,11 @@ def init(
 
 
 def _sources(root: Path) -> str:
-    """Where ``ico-mcp`` and ``ico`` come from: the checkouts this server
+    """Where ``ico-mcp`` and ``apriori-ico`` (ICO) come from: the checkouts this server
     runs from when it is an editable install, else their git repositories."""
     checkouts = {
         "ico-mcp": _checkout(Path(ico_mcp.__file__), "ico-mcp"),
-        "ico": _checkout(Path(ico.__file__), "ico"),
+        "apriori-ico": _checkout(Path(ico.__file__), "apriori-ico"),
     }
     lines: list[str] = []
     for package, checkout in checkouts.items():
