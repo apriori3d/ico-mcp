@@ -95,7 +95,8 @@ class TargetConfig:
     """Where ``run(target=...)`` sends a run: a RunPod Serverless endpoint
     and the storage of its inputs and outputs (``s3://bucket/prefix``);
     without ``storage``, the network volume of the current order is the
-    storage (``volume_up``).
+    storage (``volume_up``); with both, the storage takes the inputs and
+    outputs and the volume only assets and caches.
     Keys are environment variables of the server (``RUNPOD_API_KEY``,
     ``AWS_*``), given only to the kernels of remote runs."""
 

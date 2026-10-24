@@ -17,8 +17,10 @@ import pytest
 from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
 
+from ico_mcp import targets
 from ico_mcp.config import Config, ConfigError, load_config
 from ico_mcp.kernel_client import KernelClient
+from ico_mcp.protocol import JsonObject
 from ico_mcp.server import create_server
 from ico_mcp.sources import absolute_imports, job_code
 
@@ -251,6 +253,42 @@ async def test_files_go_up_and_outputs_come_back(
     assert output == str(local) and local.read_text() == "HELLO1"
     uploaded = done["result"]["uploaded"][str(source)]
     assert uploaded.endswith(f"/runs/{started['run_id']}/in/notes.txt")
+
+
+async def test_a_storage_wins_over_the_volume_of_an_order(
+    remote: Config, tmp_path: Path, runpod: FakeRunPod
+) -> None:
+    # The volume's S3 API would need RunPod keys: with a storage, inputs
+    # and outputs never go there.
+    volume: JsonObject = {
+        "id": "vol1",
+        "name": "ico-gpu",
+        "size": 30,
+        "datacenter": "EU-RO-1",
+    }
+    targets.set_volume(remote, "gpu", volume)
+    source = tmp_path / "notes.txt"
+    source.write_text("hello")
+    spec = {
+        "kind": "op",
+        "op": "upper_file@1",
+        "params": {"out_dir": {"$param": "out"}},
+    }
+    async with Client(create_server(remote)) as client:
+        started = await call(
+            client, "run", spec=spec, input=str(source), params={"out": "$JOB/out"},
+            target="gpu", wait=False,
+        )  # fmt: skip
+        done = await finish(client, started["run_id"])
+
+    assert done["state"] == "done", done.get("kernel_error")
+    storage = f"file://{tmp_path / 'bucket'}/runs/{started['run_id']}"
+    assert done["result"]["uploaded"][str(source)] == f"{storage}/in/notes.txt"
+    [job] = runpod.jobs.values()
+    assert job.body["input"]["job"]["out"] == f"{storage}/out"
+    assert "volume" not in job.body["input"]["job"]
+    local = remote.runs_dir / started["run_id"] / "out" / "notes.txt"
+    assert local.read_text() == "HELLO1"
 
 
 async def test_a_remote_run_can_be_cancelled(remote: Config) -> None:

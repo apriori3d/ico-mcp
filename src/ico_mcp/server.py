@@ -98,8 +98,9 @@ operators and types, runs); call it whenever these notes are not enough.
    (confirm=true above 2 GB) and runs as a run (wait_run, cancel_run).
    A run on a target (run(target=...)) that ends with missing_assets
    needs fetch_assets(target=..., pipeline=...) there, on the same word.
-   A target without storage works on the volume of an order: volume_up
-   and volume_down, each on the human's word (confirm=true).
+   A target's assets, and the inputs and outputs of a target without
+   storage, live on the volume of an order: volume_up and volume_down,
+   each on the human's word (confirm=true).
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -1014,8 +1015,9 @@ def create_server(
     ) -> dict[str, JsonValue]:
         """Create a network volume for an order and attach it to the
         target's endpoint (its workers then run in that datacenter). The
-        volume is the storage of the target's runs and holds the assets
-        (then fetch_assets(target=...)). It costs money while it exists
+        volume holds the assets (then fetch_assets(target=...)) and, for a
+        target without storage in ico.toml, the inputs and outputs of its
+        runs. It costs money while it exists
         (about $0.07 per GB and month): ask the human, then call with
         confirm=true; volume_down when the order is done."""
         chosen = resolve_target(target)
