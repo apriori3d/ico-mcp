@@ -8,6 +8,7 @@ import pytest
 from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
 
+from ico_mcp import __version__
 from ico_mcp.config import Config
 from ico_mcp.server import create_server
 from ico_mcp.version import STALE_HINT, fingerprint, git_state
@@ -64,14 +65,14 @@ async def test_status_of_a_fresh_server(
         report = await status(client)
         instructions = client.instructions
 
-    assert report["version"] == "0.1.0"
+    assert report["version"] == __version__
     assert report["running"]["commit"] == report["on_disk"]["commit"] == commit
     assert report["running"]["dirty"] is False
     assert report["running"]["started"].endswith("Z")
     assert report["stale"] is False and "hint" not in report
     assert "server_status" in report["tools"] and "run" in report["tools"]
     assert instructions is not None
-    assert instructions.startswith(f"ico-mcp 0.1.0 ({commit})")
+    assert instructions.startswith(f"ico-mcp {__version__} ({commit})")
 
 
 async def test_changed_code_makes_the_server_stale(
@@ -103,7 +104,7 @@ async def test_without_git(config: Config, code: Path) -> None:
     assert report["running"]["commit"] is None
     assert report["running"]["fingerprint"] == fingerprint([code])
     assert instructions is not None and instructions.startswith(
-        "ico-mcp 0.1.0 (no git)"
+        f"ico-mcp {__version__} (no git)"
     )
 
 

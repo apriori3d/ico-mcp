@@ -3,4 +3,4 @@
 See ``docs/design/ico-mcp.md`` for the design.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

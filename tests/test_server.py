@@ -15,6 +15,7 @@ import pytest
 from mcp.client import Client
 from mcp_types import CallToolResult, TextContent
 
+import ico_mcp
 from ico_mcp import jobs as jobs_module
 from ico_mcp.config import Config, Timeouts
 from ico_mcp.server import INSTRUCTIONS, create_server
@@ -95,7 +96,7 @@ async def test_tools_and_instructions(config: Config) -> None:
 
     assert {tool.name for tool in tools} == TOOLS
     assert instructions is not None
-    assert instructions.startswith("ico-mcp 0.1.0 (")
+    assert instructions.startswith(f"ico-mcp {ico_mcp.__version__} (")
     assert instructions.endswith(INSTRUCTIONS)
     read_only = {
         t.name for t in tools if t.annotations and t.annotations.read_only_hint
