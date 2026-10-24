@@ -247,6 +247,10 @@ PR each:
 39. [ ] `assets_status` / `fetch_assets` of a saved pipeline without
     `params` take the pipeline's `check_params`; today a required
     parameter (`out_dir`) fails them.
+40. [x] A target with `storage` and an order volume stages its inputs and
+    outputs in the storage, never through the volume's S3 API (its keys
+    differ from `AWS_*`, and its datacenter's API went down); the volume
+    keeps assets, work dirs and caches.
 
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):

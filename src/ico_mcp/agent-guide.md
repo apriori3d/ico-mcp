@@ -528,6 +528,11 @@ class VideoRef:
   `volume_down(target)` deletes it with everything on it when the order
   is done (the outputs are already in `runs/`). Without a volume such a
   target answers `no_volume`.
+  A target with `storage` keeps its inputs and outputs there (the S3
+  endpoint and keys of the server's `AWS_*` variables, the same on the
+  worker) even with a volume: the volume then holds only what the worker
+  reads at its mount (assets, work dirs, caches), and its own S3 API is
+  never used.
   Assets live on the target's volume, not here: a remote run whose assets
   are not there ends at once with `missing_assets` (ids, sizes). Tell the
   human, and on their word `fetch_assets(target=..., pipeline=...)`

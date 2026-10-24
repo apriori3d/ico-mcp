@@ -46,10 +46,12 @@ def run_remote(
     """
     target = cast(JsonObject, params["target"])
     run_id = str(params["run_id"])
-    volume = _volume(target)
+    volume = None if target.get("storage") else _volume(target)
     if volume is not None:
-        # The order's volume is the storage: its S3 API from here, its
-        # mount on the worker.
+        # Without a storage the order's volume is the storage: its S3 API
+        # from here, its mount on the worker. With one, the volume keeps
+        # only what the worker reads at its mount (assets, work dirs) and
+        # its S3 API (and keys) is not used at all.
         os.environ.update(volume.s3_env())
         storage = volume.uri("ico").rstrip("/")
     else:
