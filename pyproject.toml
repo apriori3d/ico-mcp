@@ -1,6 +1,6 @@
 [project]
 name = "ico-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "An MCP server on top of ICO: an agent writes typed operators, composes them into pipelines, runs and profiles them, and turns what works into reviewed code."
 readme = "README.md"
 license = { text = "Apache 2.0" }
