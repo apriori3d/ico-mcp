@@ -87,6 +87,7 @@ def run_remote(
         max_items=cast(int | None, params.get("max_items")),
         id=run_id,
         volume=volume.id if volume is not None else None,
+        cleanup=bool(target.get("cleanup")),
     )
     try:
         handle = _executor(target).submit(job)

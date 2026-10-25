@@ -895,3 +895,19 @@ async def wait_for_progress(client: Client, run_id: str) -> None:
             if any(p["done"] >= 2 for p in status["progress"]):
                 return
             await anyio.sleep(0.05)
+
+
+async def test_operators_see_the_run_id(config: Config) -> None:
+    async with Client(create_server(config)) as client:
+        by_env = await call(client, "run", spec=op("getenv@1"), input="ICO_RUN_ID")
+        by_string = await call(
+            client, "run", spec=op("shout@1"), input="/tmp/ico-work/$RUN"
+        )
+        misplaced = await call_error(
+            client, "run", spec=op("shout@1"), input="x", cleanup=False
+        )
+
+    assert by_env["outputs"] == [by_env["run_id"]]
+    run_id = str(by_string["run_id"])
+    assert by_string["outputs"] == [f"/TMP/ICO-WORK/{run_id.upper()}"]
+    assert misplaced["code"] == "bad_request"

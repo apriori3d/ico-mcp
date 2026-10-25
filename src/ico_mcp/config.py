@@ -98,13 +98,17 @@ class TargetConfig:
     storage (``volume_up``); with both, the storage takes the inputs and
     outputs and the volume only assets and caches.
     Keys are environment variables of the server (``RUNPOD_API_KEY``,
-    ``AWS_*``), given only to the kernels of remote runs."""
+    ``AWS_*``), given only to the kernels of remote runs. ``cleanup``
+    removes a run's job directory on the worker (``ico-jobs/<run_id>`` on
+    the volume) when the run ends, whatever the outcome; ``run(cleanup=)``
+    overrides it for one run."""
 
     name: str
     endpoint: str
     storage: str | None = None
     provider: Literal["runpod"] = "runpod"
     execution_timeout: float = 10800
+    cleanup: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +300,7 @@ def _targets(table: _Table) -> tuple[TargetConfig, ...]:
                 endpoint=target.string("endpoint"),
                 storage=storage.rstrip("/") or None,
                 execution_timeout=target.positive("execution_timeout", 10800),
+                cleanup=target.boolean("cleanup", True),
             )
         )
         target.reject_unknown()
@@ -357,6 +362,12 @@ class _Table:
         if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
             raise _error(self.key(key), "a positive number", value)
         return float(value)
+
+    def boolean(self, key: str, default: bool) -> bool:
+        value = self.get(key, default)
+        if not isinstance(value, bool):
+            raise _error(self.key(key), "true or false", value)
+        return value
 
     def choice(self, key: str, choices: tuple[str, ...], default: str) -> str:
         value = self.get(key, default)

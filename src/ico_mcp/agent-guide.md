@@ -547,6 +547,22 @@ class VideoRef:
   cancel loses the outputs so far. First run a small input locally; a
   remote run costs GPU time from the worker's start (model loading
   included).
+  The job directory (`$JOB`, `ico-jobs/<run_id>` on the endpoint's
+  volume, with the run's code, inputs, `work/` and `out/`) is removed
+  when the run ends, after the outputs are in the storage; failed and
+  cancelled runs too. A full volume fails every later run at once, so
+  keep this default: `run(..., cleanup=false)` keeps the directory of one
+  run (to inspect a failure on the volume), and `cleanup = false` under
+  `[targets.<name>]` in `ico.toml` keeps every run's. A run's directory
+  is never reused (each run has a new id).
+  Large intermediate files belong on the worker's container disk, not
+  under `$JOB` on the volume: `$RUN` in a string of `input` / `params`
+  is the run id, here and on a target, so `params={"work_dir":
+  "/tmp/ico-work/$RUN"}` gives every run a fresh directory, even on a
+  warm worker that keeps `/tmp` between jobs. Operators also see the id
+  in `ICO_RUN_ID` (worker processes, e.g. of `MPWorker`, inherit it).
+  Nothing removes such a directory: an operator that is done with it
+  removes it.
   A target without `storage` in `ico.toml` works on the network volume of
   the current order: `volume_up(target, datacenter)` creates it and
   attaches it to the endpoint (it costs money while it exists: ask the

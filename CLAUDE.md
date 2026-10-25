@@ -251,6 +251,12 @@ PR each:
     outputs in the storage, never through the volume's S3 API (its keys
     differ from `AWS_*`, and its datacenter's API went down); the volume
     keeps assets, work dirs and caches.
+41. [x] Job directories (needs the ico change of `Job.cleanup`, `$RUN`):
+    a remote run's `ico-jobs/<run_id>` on the volume is removed when the
+    run ends, whatever the outcome (`cleanup = true` per target by
+    default, `run(cleanup=false)` keeps one); `$RUN` in input / params
+    strings and `ICO_RUN_ID` give operators the run id, locally and on
+    the worker.
 
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):
