@@ -1,6 +1,6 @@
 [project]
 name = "ico-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "An MCP server on top of ICO: an agent writes typed operators, composes them into pipelines, runs and profiles them, and turns what works into reviewed code."
 readme = "README.md"
 license = { text = "Apache 2.0" }
@@ -19,7 +19,7 @@ classifiers = [
 keywords = ["mcp", "agents", "pipelines", "ico"]
 dependencies = [
     "anyio>=4.15",
-    "apriori-ico>=0.1.0",
+    "apriori-ico>=0.1.1",
     "mcp>=2.3.0",
     # Type-checks proposed operators at run time (propose_operator).
     "pyright>=1.1.414",

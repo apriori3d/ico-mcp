@@ -30,7 +30,7 @@ wheels = [
 
 [[package]]
 name = "apriori-ico"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "../ico" }
 dependencies = [
     { name = "rich" },
@@ -232,7 +232,7 @@ wheels = [
 
 [[package]]
 name = "ico-mcp"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
