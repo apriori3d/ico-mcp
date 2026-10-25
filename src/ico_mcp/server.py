@@ -367,6 +367,7 @@ def create_server(
         profile: bool = False,
         recent: bool = False,
         target: str | None = None,
+        cleanup: bool | None = None,
     ) -> dict[str, JsonValue]:
         """Run a spec, or a saved pipeline by name, once on a JSON input;
         returns outputs and per-item errors.
@@ -398,7 +399,14 @@ def create_server(
         local files in `input` / `params` are uploaded, and the outputs come
         back into `runs/<run_id>/out/`. Follow it as any run; `sample_run`
         shows only `recent=true` previews, and a cancel loses the outputs
-        so far.
+        so far. The run's job directory on the worker (`$JOB`, on the
+        endpoint's volume) is removed when the run ends, failed and
+        cancelled runs too, unless the target sets `cleanup = false`;
+        `cleanup=false` keeps it for this run (to inspect a failure).
+
+        `$RUN` in a string of `input` / `params` is the run id, and
+        operators see it in `ICO_RUN_ID` (worker processes too): a fresh
+        per-run directory, e.g. `/tmp/ico-work/$RUN`.
         """
         if (spec is None) == (pipeline is None):
             raise ToolError(
@@ -410,6 +418,15 @@ def create_server(
                 )
             )
         _check_input(input)
+        if cleanup is not None and target is None:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": "cleanup applies to runs on a target",
+                    }
+                )
+            )
         chosen = resolve_target(target) if target is not None else None
         if chosen is not None:
             require_volume(chosen)
@@ -436,6 +453,7 @@ def create_server(
             profile=profile,
             recent=recent,
             target=chosen,
+            cleanup=cleanup,
         )
         if not wait:
             return {"run_id": job.id, "state": "running", "dashboard": board.url}

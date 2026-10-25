@@ -159,6 +159,7 @@ class Jobs:
         recent: bool = False,
         target: TargetConfig | None = None,
         fetch: bool = False,
+        cleanup: bool | None = None,
     ) -> Job:
         """Start a run in a new kernel; it finishes in the background.
 
@@ -169,7 +170,8 @@ class Jobs:
         operators, carries the code of the modules the spec uses (and the
         assets manifest) in the job, and bridges the job's events;
         ``fetch`` with a ``target`` sends a prefetch of the asset ids in
-        ``input`` instead (the job carries only the manifest and lock).
+        ``input`` instead (the job carries only the manifest and lock);
+        ``cleanup`` overrides the target's ``cleanup`` for this run.
         """
         if self._tasks is None:
             raise RuntimeError("Jobs is not entered")
@@ -193,6 +195,8 @@ class Jobs:
             params["recent"] = True
         if fetch:
             params["fetch"] = True
+        if cleanup is not None:
+            params["cleanup"] = cleanup
         if on_progress is not None:
             job.listeners.append(on_progress)
         self._tasks.start_soon(self._run, job, params, pipeline, target)
@@ -322,6 +326,7 @@ class Jobs:
         modules = await self._modules(cast(JsonObject, params["spec"]))
         if target is None:
             job.kernel.modules = modules
+            params = {**params, "run_id": job.id}
         else:
             sources, packages = job_code(
                 self.config, [] if params.get("fetch") else modules
@@ -338,6 +343,7 @@ class Jobs:
                     "storage": target.storage,
                     "execution_timeout": target.execution_timeout,
                     "volume": targets.volume(self.config, target.name),
+                    "cleanup": params.get("cleanup", target.cleanup),
                 },
             }
             job.kernel.modules = []  # the code goes to the target

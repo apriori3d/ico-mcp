@@ -66,6 +66,7 @@ from ico.core.runtime.tool import IcoRuntimeTool
 from ico.core.signature_utils import format_ico_type
 from ico.core.tree_utils import TreePathIndex
 from ico.registry import RegistryEntry, default_registry, load_operators
+from ico.remote.runner import RUN_ENV, RUN_VAR
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
 from ico.spec.run import DEFAULT_MAX_ITEMS
 from ico.tools.profiler import ProfilerTool, ProfileSnapshot
@@ -329,6 +330,15 @@ class Kernel:
         spec = _spec(params)
         max_items = _positive_int(params, "max_items", DEFAULT_MAX_ITEMS)
         values = _values(params)
+        input = params.get("input")
+        run_id = _optional(params, "run_id", str)
+        if run_id is not None:
+            # As a remote job's runner does: $RUN in strings, ICO_RUN_ID
+            # for operators and the worker processes they start (each run
+            # has a kernel of its own).
+            os.environ[RUN_ENV] = run_id
+            input = _expand_run(input, run_id)
+            values = cast(JsonObject | None, _expand_run(values, run_id))
         token = IcoCancelToken()
         if self._cancel_requested:
             token.cancel(CANCEL_REASON)
@@ -346,7 +356,7 @@ class Kernel:
         try:
             result = run(
                 spec,
-                params.get("input"),
+                input,
                 max_items=max_items,
                 tools=[progress, samples, handle],
                 params=values,
@@ -550,6 +560,17 @@ def _positive_int(params: JsonObject, key: str, default: int) -> int:
     value = params.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise KernelError("bad_request", f"'{key}' must be a positive integer")
+    return value
+
+
+def _expand_run(value: JsonValue, run_id: str) -> JsonValue:
+    """``value`` with ``$RUN`` in its strings replaced by the run id."""
+    if isinstance(value, str):
+        return value.replace(RUN_VAR, run_id)
+    if isinstance(value, list):
+        return [_expand_run(v, run_id) for v in value]
+    if isinstance(value, dict):
+        return {k: _expand_run(v, run_id) for k, v in value.items()}
     return value
 
 

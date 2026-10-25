@@ -7,6 +7,7 @@ import itertools
 import json
 import textwrap
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -308,6 +309,62 @@ async def test_a_remote_run_can_be_cancelled(remote: Config) -> None:
     assert done["state"] == "failed"
 
 
+def gone(path: Path, timeout: float = 10.0) -> bool:
+    """Whether ``path`` disappears within ``timeout`` seconds (the runner
+    removes its job directory after its last event)."""
+    deadline = time.monotonic() + timeout
+    while path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not path.exists()
+
+
+async def test_job_directories_are_removed_unless_kept(
+    remote: Config, tmp_path: Path, runpod: FakeRunPod
+) -> None:
+    jobs = tmp_path / "volume" / "jobs"
+    async with Client(create_server(remote)) as client:
+        cleaned = await call(
+            client, "run", spec={"kind": "op", "op": "getenv@1"}, input="ICO_RUN_ID",
+            target="gpu",
+        )  # fmt: skip
+        started = await call(
+            client, "run", spec={"kind": "op", "op": "fail@1"}, input="x",
+            target="gpu", wait=False,
+        )  # fmt: skip
+        failed = await finish(client, started["run_id"])
+        kept = await call(
+            client, "run", spec={"kind": "op", "op": "shout@1"}, input="$RUN",
+            target="gpu", cleanup=False,
+        )  # fmt: skip
+
+    assert cleaned["outputs"] == [cleaned["run_id"]]
+    assert failed["state"] == "failed"
+    assert gone(jobs / cleaned["run_id"]) and gone(jobs / started["run_id"])
+    assert kept["outputs"] == [kept["run_id"].upper()]
+    assert (jobs / kept["run_id"] / "code").is_dir()
+    options = [j.body["input"]["job"]["options"] for j in runpod.jobs.values()]
+    assert [o.get("cleanup", False) for o in options] == [True, True, False]
+
+
+async def test_a_target_can_keep_its_job_directories(
+    remote: Config, tmp_path: Path
+) -> None:
+    (remote.root / "ico.toml").write_text(
+        (remote.root / "ico.toml")
+        .read_text()
+        .replace('endpoint = "ep"', 'endpoint = "ep"\ncleanup = false')
+    )
+    config = load_config(remote.root)
+    async with Client(create_server(config)) as client:
+        kept = await call(
+            client, "run", spec={"kind": "op", "op": "shout@1"}, input="x",
+            target="gpu",
+        )  # fmt: skip
+
+    assert [t.cleanup for t in config.targets] == [False]
+    assert (tmp_path / "volume" / "jobs" / kept["run_id"] / "code").is_dir()
+
+
 async def test_an_unknown_target(remote: Config) -> None:
     async with Client(create_server(remote)) as client:
         error = await call_error(
@@ -355,6 +412,9 @@ def test_targets_in_ico_toml(make_repo: MakeRepo, tmp_path: Path) -> None:
         "s3://b/p",
         600,
     )
+    assert target.cleanup
+    with pytest.raises(ConfigError, match="targets.y.cleanup: expected true or false"):
+        make_repo(tmp_path / "c", '[targets.y]\nendpoint = "e"\ncleanup = 1\n')
     with pytest.raises(ConfigError, match="targets.x.storage: expected an s3://"):
         make_repo(tmp_path / "b", '[targets.x]\nendpoint = "e"\nstorage = "/tmp"\n')
 
