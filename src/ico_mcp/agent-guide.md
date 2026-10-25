@@ -221,6 +221,32 @@ errors collected instead of stopping the run:
    "children": [{"kind": "op", "op": "remove_subtitles@1"}]}]}
 ```
 
+To overlap a CPU step with the step that produces its items (composing
+and writing frames while the GPU makes the next item), put the CPU step
+in an `async_stream` of one slot. A `stream` pulls one item at a time,
+so the producer waits while the step runs. An `async_stream` hands an
+item to its slot and meanwhile pulls the next one from the producer:
+
+```json
+{"kind": "seq", "children": [
+  {"kind": "op", "op": "generate_frames@1"},
+  {"kind": "async_stream",
+   "params": {"pool_size": 1, "factory": true, "ordered": true},
+   "children": [{"kind": "op", "op": "write_clip@1"}]}]}
+```
+
+- Two 1 s steps over 4 items take 8 s with both in `stream`s, and 5 s
+  with the second in the `async_stream` above.
+- It reads ahead only a few items. Besides the `pool_size` items in work,
+  it holds up to two more, waiting at its input or for its consumer. When
+  the consumer is slower, it stops pulling from the producer. So about
+  `pool_size + 2` items are in memory at once, not the whole stream.
+- A thread slot (no `worker`) is enough when the step releases the GIL
+  (numpy, OpenCV, torch, a `subprocess` such as ffmpeg). The item then
+  stays in the process, with no transfer. A step in pure Python needs a
+  `worker` slot to run beside the producer.
+- `ordered: true` keeps the items in their input order.
+
 To count the items of an iterator that an earlier node produced (e.g. the
 output of an `async_stream`), wrap the progress node in a `stream`:
 `{"kind": "stream", "children": [{"kind": "progress", "params": {"total": 7}}]}`.
