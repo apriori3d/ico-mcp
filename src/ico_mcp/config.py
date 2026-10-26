@@ -27,6 +27,7 @@ TypecheckMode = Literal["basic", "standard", "strict"]
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _GITHUB_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _SIZE = re.compile(r"\s*\d+(?:\.\d+)?\s*[KMGT]?B?\s*", re.IGNORECASE)
+_SHARE = re.compile(r"\s*\d{1,2}(?:\.\d+)?%\s*")
 
 
 class ConfigError(ValueError):
@@ -82,12 +83,13 @@ class AssetsConfig:
 
 @dataclass(frozen=True, slots=True)
 class ResourcesConfig:
-    """Memory budgets of the resource pool of each kernel (``"48GB"``):
-    released models stay in RAM up to ``ram`` and on the GPU up to
-    ``gpu``; ``None`` keeps ICO's defaults (half the memory, 0)."""
+    """Memory of the resource pool of each kernel: released models stay in
+    RAM up to ``ram`` (``"48GB"``), and on the GPU while it has more than
+    ``gpu_free`` free (a share, ``"20%"``); ``None`` keeps ICO's defaults
+    (half the memory, 20 %)."""
 
     ram: str | None = None
-    gpu: str | None = None
+    gpu_free: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,14 +277,14 @@ def _assets(table: _Table, root: Path) -> AssetsConfig:
 def _resources(table: _Table) -> ResourcesConfig:
     # The format of ico.resources.parse_size, checked here without importing
     # ICO's registry into the server.
-    budgets: dict[str, str | None] = {}
-    for key in ("ram", "gpu"):
-        value = table.string(key, "") if key in table.data else ""
-        if value and not _SIZE.fullmatch(value):
-            raise _error(table.key(key), "a size such as '48GB'", value)
-        budgets[key] = value or None
+    ram = table.string("ram", "") if "ram" in table.data else ""
+    if ram and not _SIZE.fullmatch(ram):
+        raise _error(table.key("ram"), "a size such as '48GB'", ram)
+    free = table.string("gpu_free", "") if "gpu_free" in table.data else ""
+    if free and not _SHARE.fullmatch(free):
+        raise _error(table.key("gpu_free"), "a share such as '20%'", free)
     table.reject_unknown()
-    return ResourcesConfig(ram=budgets["ram"], gpu=budgets["gpu"])
+    return ResourcesConfig(ram=ram or None, gpu_free=free or None)
 
 
 def _targets(table: _Table) -> tuple[TargetConfig, ...]:

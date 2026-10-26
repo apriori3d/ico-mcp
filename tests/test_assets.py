@@ -165,7 +165,8 @@ def test_ico_toml_blocks(make_repo: MakeRepo, tmp_path: Path) -> None:
     config = cast(
         Config,
         make_repo(
-            tmp_path / "a", '[assets]\nroot = "~/models"\n[resources]\ngpu = "8GB"\n'
+            tmp_path / "a",
+            '[assets]\nroot = "~/models"\n[resources]\ngpu_free = "30%"\n',
         ),
     )
     assert config.assets.root == Path("~/models").expanduser()
@@ -173,9 +174,11 @@ def test_ico_toml_blocks(make_repo: MakeRepo, tmp_path: Path) -> None:
     env = asset_env(config)
     assert env["ICO_ASSETS_MANIFEST"] == str(config.root / "assets.toml")
     assert env["ICO_ASSETS_ROOT"] == str(Path("~/models").expanduser())
-    assert env["ICO_RESOURCES_GPU"] == "8GB" and "ICO_RESOURCES_RAM" not in env
+    assert env["ICO_RESOURCES_GPU_FREE"] == "30%" and "ICO_RESOURCES_RAM" not in env
     with pytest.raises(ConfigError, match="resources.ram: expected a size"):
         make_repo(tmp_path / "b", '[resources]\nram = "lots"\n')
+    with pytest.raises(ConfigError, match="resources.gpu_free: expected a share"):
+        make_repo(tmp_path / "d", '[resources]\ngpu_free = "8GB"\n')
     with pytest.raises(ConfigError, match="unknown keys: assets.path"):
         make_repo(tmp_path / "c", '[assets]\npath = "x"\n')
 

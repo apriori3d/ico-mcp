@@ -267,7 +267,7 @@ PR each:
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):
 
-33. [x] Kernel env (`[assets] root`, `[resources] ram / gpu`, the
+33. [x] Kernel env (`[assets] root`, `[resources] ram / gpu_free`, the
     manifest beside `ico.toml`), `validate` warnings (`missing_asset`,
     `unknown_asset`, `no_assets_manifest`), assets in `get_operator` and
     `environment`, the guide.

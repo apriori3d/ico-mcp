@@ -58,8 +58,8 @@ def asset_env(config: Config) -> dict[str, str]:
         env["ICO_ASSETS_ROOT"] = os.environ["ICO_ASSETS_ROOT"]
     if config.resources.ram:
         env["ICO_RESOURCES_RAM"] = config.resources.ram
-    if config.resources.gpu:
-        env["ICO_RESOURCES_GPU"] = config.resources.gpu
+    if config.resources.gpu_free:
+        env["ICO_RESOURCES_GPU_FREE"] = config.resources.gpu_free
     return env
 
 

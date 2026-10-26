@@ -109,7 +109,7 @@ def operator_assets(ref: str) -> list[JsonValue]:
 
 def report() -> JsonObject:
     """The ``assets`` and ``resources`` blocks of ``environment``."""
-    budgets: JsonObject = {"ram": pool().ram, "gpu": pool().gpu}
+    budgets: JsonObject = {"ram": pool().ram, "gpu_free": pool().headroom}
     store = _store()
     if store is None:
         return {"assets": {"manifest": None}, "resources": budgets}
