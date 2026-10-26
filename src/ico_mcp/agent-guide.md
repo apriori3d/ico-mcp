@@ -244,7 +244,9 @@ item to its slot and meanwhile pulls the next one from the producer:
 - A thread slot (no `worker`) is enough when the step releases the GIL
   (numpy, OpenCV, torch, a `subprocess` such as ffmpeg). The item then
   stays in the process, with no transfer. A step in pure Python needs a
-  `worker` slot to run beside the producer.
+  `worker` slot to run beside the producer. Measured: splitting 9 videos
+  into scenes (ffmpeg and a small torch model) takes the same time in 4
+  threads as in 4 worker processes, and loads the model once.
 - `ordered: true` keeps the items in their input order.
 
 To count the items of an iterator that an earlier node produced (e.g. the
@@ -439,6 +441,22 @@ UMT5 = Umt5()
   process, which keeps it in RAM while the budget allows
   (`[resources] ram = "48GB"` in `ico.toml`) and shares it with every
   operator using an equal resource. No class attributes as caches.
+- **GPU models run in the run's process**, not in a `worker` of their
+  own. That process's pool then sees every model on the GPU, keeps idle
+  ones there while the GPU has room, and frees them when the next one
+  needs it; a process cannot free memory for another one. A worker
+  process also holds a CUDA context (~0.3-0.5 GB) until the run ends and
+  loads its own copy of each model. Put a step in a `worker` only when its
+  framework clashes with the others (Paddle next to torch: the Paddle
+  step goes to a worker) or for pure-Python CPU work in parallel.
+- A model shares the run's process with the others, so its `load` leaves
+  the process as it found it. Some libraries change global state when a
+  model is built (TransNetV2 turns on
+  `torch.use_deterministic_algorithms` and seeds torch, numpy and random,
+  which made another model take a slower path with 1.6 GB more and run out
+  of memory): save that state before and put it back after. An operator
+  whose one-off inference leaves a large cache (a whole video at once)
+  calls `torch.cuda.empty_cache()` after it.
 - `validate` reports assets that are not here (`missing_asset`, with the
   size) and ids that are not in `assets.toml` (`unknown_asset`, an
   error); `get_operator`, `environment` and `assets_status` show their
