@@ -75,6 +75,8 @@ class FakeRunPod:
         self.gpu = threading.Event()
         """Cleared: jobs wait in the queue (no GPU free)."""
         self.gpu.set()
+        self.broken = False
+        """Set: stream reads fail (a network outage on the client)."""
         self.ids = itertools.count(1)
         fake = self
 
@@ -104,6 +106,8 @@ class FakeRunPod:
             threading.Thread(target=self.work, args=(id, job), daemon=True).start()
             return self.reply(request, {"id": id, "status": job.status})
         job = self.jobs[rest[0]]
+        if action == "stream" and self.broken:
+            return self.reply(request, {"error": "unavailable"}, 503)
         if action == "stream":
             new = job.chunks[job.read :]
             job.read += len(new)
@@ -117,9 +121,11 @@ class FakeRunPod:
             job.loop.call_soon_threadsafe(job.task.cancel)
         self.reply(request, {"id": rest[0], "status": job.status})
 
-    def reply(self, request: BaseHTTPRequestHandler, body: object) -> None:
+    def reply(
+        self, request: BaseHTTPRequestHandler, body: object, code: int = 200
+    ) -> None:
         data = json.dumps(body).encode()
-        request.send_response(200)
+        request.send_response(code)
         request.send_header("content-length", str(len(data)))
         request.end_headers()
         request.wfile.write(data)
@@ -192,6 +198,117 @@ async def finish(client: Client, run_id: str) -> dict[str, Any]:
 
 def seq(*refs: str) -> dict[str, Any]:
     return {"kind": "seq", "children": [{"kind": "op", "op": r} for r in refs]}
+
+
+async def test_a_run_records_where_it_went(remote: Config, tmp_path: Path) -> None:
+    async with Client(create_server(remote)) as client:
+        started = await call(
+            client, "run", spec=seq("shout@1", "count_words@1"), input="a b c",
+            target="gpu", wait=False,
+        )  # fmt: skip
+        done = await finish(client, started["run_id"])
+
+    run_id = started["run_id"]
+    record = json.loads((remote.runs_dir / run_id / "remote.json").read_text())
+    bucket = f"file://{tmp_path / 'bucket'}"
+    assert record["runpod_id"] == "rp-1" and record["target"] == "gpu"
+    assert record["status"] == f"{bucket}/runs/{run_id}/result.json"
+    written = json.loads(
+        (tmp_path / "bucket" / "runs" / run_id / "result.json").read_text()
+    )
+    assert written["event"] == "result" and written["result"]["outputs"] == [3]
+    assert done["result"]["outputs"] == [3]
+    [trace] = [
+        json.loads(line)
+        for path in remote.runs_dir.glob("*.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    assert (trace["run_id"], trace["target"]) == (run_id, "gpu")
+
+
+async def test_a_lost_stream_is_fetched_from_the_storage(
+    remote: Config, runpod: FakeRunPod, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ICO_REMOTE_RETRY", "0.5")
+    source = tmp_path / "notes.txt"
+    source.write_text("hello")
+    spec = {
+        "kind": "op",
+        "op": "upper_file@1",
+        "params": {"out_dir": {"$param": "out"}},
+    }
+    runpod.gpu.clear()  # the job waits for a worker while the network fails
+    runpod.broken = True
+    async with Client(create_server(remote)) as client:
+        started = await call(
+            client, "run", spec=spec, input=str(source), params={"out": "$JOB/out"},
+            target="gpu", wait=False,
+        )  # fmt: skip
+        lost = await finish(client, started["run_id"])
+        runpod.gpu.set()
+        [job] = runpod.jobs.values()
+        while job.status != "COMPLETED":  # the job goes on without the client
+            await asyncio.sleep(0.05)
+        runpod.broken = False
+        fetching = await call(client, "fetch_run", run_id=started["run_id"])
+        fetched = await finish(client, fetching["run_id"])
+
+    run_id = started["run_id"]
+    assert lost["state"] == "failed"
+    assert lost["kernel_error"]["code"] == "remote_error"
+    assert lost["kernel_error"]["run_id"] == run_id
+    assert "fetch_run" in lost["kernel_error"]["message"]
+    assert fetching["fetches"] == run_id and fetching["target"] == "gpu"
+    assert fetched["state"] == "done", fetched.get("kernel_error")
+    local = remote.runs_dir / run_id / "out" / "notes.txt"
+    assert fetched["result"]["outputs"] == [str(local)]
+    assert fetched["result"]["fetched"] == run_id
+    assert local.read_text() == "HELLO1"
+
+
+async def test_fetch_run_follows_a_job_that_still_runs(
+    remote: Config, runpod: FakeRunPod, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ICO_REMOTE_RETRY", "0.5")
+    runpod.gpu.clear()
+    runpod.broken = True
+    async with Client(create_server(remote)) as client:
+        started = await call(
+            client, "run", spec=seq("shout@1", "count_words@1"), input="a b",
+            target="gpu", wait=False,
+        )  # fmt: skip
+        lost = await finish(client, started["run_id"])
+        runpod.broken = False
+        fetching = await call(client, "fetch_run", run_id=started["run_id"])
+        runpod.gpu.set()  # a worker takes the job only now
+        fetched = await finish(client, fetching["run_id"])
+
+    assert lost["state"] == "failed"
+    assert fetched["state"] == "done", fetched.get("kernel_error")
+    assert fetched["result"]["outputs"] == [2]
+    assert fetched["result"]["fetched"] == started["run_id"]
+
+
+async def test_an_older_run_is_looked_up_in_the_storage(
+    remote: Config, tmp_path: Path
+) -> None:
+    out = tmp_path / "bucket" / "runs" / "0ld" / "out"
+    out.mkdir(parents=True)
+    (out / "video.mp4").write_text("frames")
+    async with Client(create_server(remote)) as client:
+        unnamed = await call_error(client, "fetch_run", run_id="0ld")
+        older = await call(client, "fetch_run", run_id="0ld", target="gpu")
+        found = await finish(client, older["run_id"])
+        none = await call(client, "fetch_run", run_id="nothing", target="gpu")
+        missing = await finish(client, none["run_id"])
+
+    local = remote.runs_dir / "0ld" / "out" / "video.mp4"
+    assert unnamed["code"] == "bad_request"
+    assert found["state"] == "failed"
+    assert found["kernel_error"]["code"] == "remote_error"
+    assert found["kernel_error"]["outputs"] == [str(local)]
+    assert local.read_text() == "frames"
+    assert missing["kernel_error"]["code"] == "not_found"
 
 
 async def test_a_run_goes_to_the_target(remote: Config) -> None:

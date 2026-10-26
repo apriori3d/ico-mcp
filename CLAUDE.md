@@ -257,6 +257,12 @@ PR each:
     default, `run(cleanup=false)` keeps one); `$RUN` in input / params
     strings and `ICO_RUN_ID` give operators the run id, locally and on
     the worker.
+42. [x] Results of remote runs without a live stream (ico
+    `docs/proposals/2026-10-26-remote-results.md`; needs apriori3d/ico#111
+    and #112): `runs/<run_id>/remote.json` at submit (target, RunPod id,
+    storage URIs), the job's `status` URI `runs/<run_id>/result.json`,
+    `run_id` and `target` in traces, `remote_error` with the ids when the
+    stream is lost past `ICO_REMOTE_RETRY`, and the `fetch_run` tool.
 
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):
