@@ -77,6 +77,9 @@ class FakeRunPod:
         self.gpu.set()
         self.broken = False
         """Set: stream reads fail (a network outage on the client)."""
+        self.lose_unread = False
+        """Set: the next stream read drops the chunks nobody read, as
+        RunPod does for a client that was away."""
         self.ids = itertools.count(1)
         fake = self
 
@@ -108,6 +111,9 @@ class FakeRunPod:
         job = self.jobs[rest[0]]
         if action == "stream" and self.broken:
             return self.reply(request, {"error": "unavailable"}, 503)
+        if action == "stream" and self.lose_unread:
+            self.lose_unread = False
+            job.read = len(job.chunks)
         if action == "stream":
             new = job.chunks[job.read :]
             job.read += len(new)
@@ -264,6 +270,29 @@ async def test_a_lost_stream_is_fetched_from_the_storage(
     assert fetched["result"]["outputs"] == [str(local)]
     assert fetched["result"]["fetched"] == run_id
     assert local.read_text() == "HELLO1"
+
+
+async def test_a_result_lost_with_the_stream_comes_from_the_storage(
+    remote: Config, runpod: FakeRunPod, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ICO_REMOTE_RETRY", "60")
+    async with Client(create_server(remote)) as client:
+        started = await call(
+            client, "run", spec=seq("shout@1", "count_words@1"), input="a b c",
+            target="gpu", wait=False,
+        )  # fmt: skip
+        while not runpod.jobs:
+            await asyncio.sleep(0.05)
+        runpod.broken = True  # the client goes away while the job runs
+        [job] = runpod.jobs.values()
+        while job.status != "COMPLETED":
+            await asyncio.sleep(0.05)
+        runpod.lose_unread = True  # its last events, the result too
+        runpod.broken = False
+        done = await finish(client, started["run_id"])
+
+    assert done["state"] == "done", done.get("kernel_error")
+    assert done["result"]["outputs"] == [3]
 
 
 async def test_fetch_run_follows_a_job_that_still_runs(

@@ -98,7 +98,7 @@ def run_remote(
     except RuntimeError as e:
         raise KernelError("remote_error", str(e)) from None
     _record(runs_dir, run_id, target, handle.id, storage)
-    result = _follow(handle, run_id, notify, cancel)
+    result = _follow(handle, run_id, notify, cancel, status_uri)
     result = _finish(result, out_uri, runs_dir, run_id, target)
     if staged:
         result["uploaded"] = cast(JsonValue, dict(staged))
@@ -138,7 +138,7 @@ def fetch_run(
         except RuntimeError:
             status = ""  # RunPod no longer keeps the job
         if status and status not in DONE:
-            result = _follow(handle, run_id, notify, cancel)
+            result = _follow(handle, run_id, notify, cancel, status_uri)
             result = _finish(result, out_uri, runs_dir, run_id, target)
             result["fetched"] = run_id
             return result
@@ -196,9 +196,18 @@ def _record(
 
 
 def _follow(
-    handle: RunPodJob, run_id: str, notify: Notify, cancel: IcoCancelToken
+    handle: RunPodJob,
+    run_id: str,
+    notify: Notify,
+    cancel: IcoCancelToken,
+    status_uri: str,
 ) -> JsonObject:
-    """The job's events bridged into notifications, up to its result."""
+    """The job's events bridged into notifications, up to its result.
+
+    RunPod hands out a stream chunk once: after an outage of the client the
+    job may have ended with its last events, the result among them, never
+    read. Then the final event comes from ``status_uri`` (``result.json``,
+    written by the runner) instead."""
     # A cancel (SIGTERM, in the main thread) must not wait for HTTP there.
     cancel.add_listener(
         lambda reason: threading.Thread(target=handle.cancel, daemon=True).start()
@@ -214,6 +223,8 @@ def _follow(
             elif kind == "result":
                 return cast(JsonObject, event["result"])
             elif kind == "error":
+                if str(event.get("code")) in _ENDED:
+                    return _recorded(status_uri, event)
                 raise _job_error(event)
     except RuntimeError as e:
         # The job may go on without us (a network outage outlasting the
@@ -224,6 +235,23 @@ def _follow(
             {"run_id": run_id, "runpod_id": handle.id},
         ) from None
     raise KernelError("remote_error", "the remote job ended without a result")
+
+
+_ENDED = tuple(status.lower() for status in DONE)
+"""Codes of the error an executor makes when RunPod says the job ended but
+no final event of ours came (``completed``, ``failed``, ...)."""
+
+
+def _recorded(status_uri: str, ended: JsonObject) -> JsonObject:
+    """The result of a job that ended without its final event on the
+    stream: from ``status_uri``; the job's error from there, or ``ended``
+    itself when nothing was recorded."""
+    event = _read_status(status_uri)
+    if event is None:
+        raise _job_error(ended)
+    if event.get("event") == "error":
+        raise _job_error(event)
+    return cast(JsonObject, event["result"])
 
 
 def _finish(
