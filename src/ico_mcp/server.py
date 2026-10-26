@@ -100,7 +100,9 @@ operators and types, runs); call it whenever these notes are not enough.
    needs fetch_assets(target=..., pipeline=...) there, on the same word.
    A target's assets, and the inputs and outputs of a target without
    storage, live on the volume of an order: volume_up and volume_down,
-   each on the human's word (confirm=true).
+   each on the human's word (confirm=true). A run on a target that
+   failed with remote_error (its stream lost; the job goes on there) is
+   finished with fetch_run(run_id): its result from the storage.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -155,6 +157,9 @@ WAIT_MIN = 1.0
 SAMPLE_MAX = 20  # as the kernel's MAX_SAMPLES
 
 
+FETCH_RUN_SPEC: JsonObject = {"kind": "identity", "name": "fetch run"}
+"""The spec of a ``fetch_run`` (its input is the run id): the card and the
+trace of the fetch; the kernel of the target does the work."""
 RECONNECT = ("board", "name", "package", "about")
 """``ico.toml`` fields that the running server cannot apply: the dashboard
 listens already, the instructions are sent, the packages are known."""
@@ -540,6 +545,48 @@ def create_server(
             job = jobs.cancel(run_id)
         await job.finished.wait()
         return job.status()
+
+    @server.tool(annotations=WRITES)
+    async def fetch_run(run_id: str, target: str | None = None) -> dict[str, JsonValue]:
+        """Finish a remote run that lost its stream: a run on a target that
+        failed with `remote_error` (a network outage past the retries) or
+        whose server restarted while it ran. The job goes on without us and
+        leaves its outcome in the target's storage (`runs/<run_id>/`):
+        this reads its `result.json` and brings the outputs into
+        `runs/<run_id>/out/`, as the run would have; while RunPod still runs
+        the job, it follows the job's events again instead. It starts a
+        run of its own: returns its `run_id` at once; follow it with
+        `wait_run`, whose `result` is the run's (with `fetched`: the run id)
+        or its error. `target` is needed only for a run older than
+        `runs/<run_id>/remote.json` (where a run went is recorded there);
+        such a run is looked up in the storage alone, and without a
+        `result.json` its outputs come back with a `remote_error`."""
+        record = config.runs_dir / run_id / "remote.json"
+        name = target
+        if name is None and record.is_file():
+            name = str(json.loads(record.read_text(encoding="utf-8"))["target"])
+        if name is None:
+            raise ToolError(
+                json.dumps(
+                    {
+                        "code": "bad_request",
+                        "message": f"run {run_id} has no runs/{run_id}/remote.json: "
+                        "give the target it ran on",
+                    }
+                )
+            )
+        chosen = resolve_target(name)
+        require_volume(chosen)
+        job = jobs.start(
+            FETCH_RUN_SPEC, run_id, MAX_ITEMS, target=chosen, fetch_run=True
+        )
+        return {
+            "run_id": job.id,
+            "state": "running",
+            "fetches": run_id,
+            "target": chosen.name,
+            "dashboard": board.url,
+        }
 
     @server.tool(annotations=READ_ONLY)
     async def sample_run(

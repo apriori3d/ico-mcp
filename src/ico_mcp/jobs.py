@@ -160,6 +160,7 @@ class Jobs:
         target: TargetConfig | None = None,
         fetch: bool = False,
         cleanup: bool | None = None,
+        fetch_run: bool = False,
     ) -> Job:
         """Start a run in a new kernel; it finishes in the background.
 
@@ -171,7 +172,9 @@ class Jobs:
         assets manifest) in the job, and bridges the job's events;
         ``fetch`` with a ``target`` sends a prefetch of the asset ids in
         ``input`` instead (the job carries only the manifest and lock);
-        ``cleanup`` overrides the target's ``cleanup`` for this run.
+        ``cleanup`` overrides the target's ``cleanup`` for this run;
+        ``fetch_run`` with a ``target`` finishes the remote run whose id is
+        ``input`` instead (its result from the storage, or its stream).
         """
         if self._tasks is None:
             raise RuntimeError("Jobs is not entered")
@@ -195,6 +198,8 @@ class Jobs:
             params["recent"] = True
         if fetch:
             params["fetch"] = True
+        if fetch_run:
+            params["fetch_run"] = True
         if cleanup is not None:
             params["cleanup"] = cleanup
         if on_progress is not None:
@@ -328,8 +333,9 @@ class Jobs:
             job.kernel.modules = modules
             params = {**params, "run_id": job.id}
         else:
+            carries_no_code = params.get("fetch") or params.get("fetch_run")
             sources, packages = job_code(
-                self.config, [] if params.get("fetch") else modules
+                self.config, [] if carries_no_code else modules
             )
             params = {
                 **params,
@@ -347,7 +353,7 @@ class Jobs:
                 },
             }
             job.kernel.modules = []  # the code goes to the target
-            if not params.get("fetch"):
+            if not carries_no_code:
                 # The kernel of a remote run loads no operators and the
                 # target sends the plan once a worker starts; until then
                 # (minutes in a GPU queue) the main kernel's plan shows.
@@ -398,6 +404,8 @@ class Jobs:
             drafts=cast(JsonObject | None, drafts),
             profile=profiles.trace(profile) if profile is not None else None,
             resources=profiles.resources(profile) if profile is not None else None,
+            run_id=job.id,
+            target=target.name if target is not None else None,
         )
         job.finished.set()
         for wait in job.samples.values():

@@ -555,6 +555,19 @@ class VideoRef:
   run (to inspect a failure on the volume), and `cleanup = false` under
   `[targets.<name>]` in `ico.toml` keeps every run's. A run's directory
   is never reused (each run has a new id).
+  **A lost stream.** The server follows a remote run over the provider's
+  stream and retries it for `ICO_REMOTE_RETRY` seconds (600 by default).
+  A longer outage, or a restart of the server, ends the run here with
+  `remote_error` ("fetch_run(run_id) gets its outcome", `run_id` and
+  `runpod_id` in the error), while the job goes on on the worker. Its
+  outcome lands in the storage: `runs/<run_id>/out/` and
+  `runs/<run_id>/result.json` (the final event). `fetch_run(run_id)`
+  starts a run that reads that result and brings the outputs into
+  `runs/<run_id>/out/`; while the job still runs there, it follows its
+  events again. Follow it with `wait_run`; its `result` is the run's,
+  with `fetched`. Where a run went is in `runs/<run_id>/remote.json`; an
+  older run needs `fetch_run(run_id, target=...)`, and without a
+  `result.json` only its outputs come back, with a `remote_error`.
   Large intermediate files belong on the worker's container disk, not
   under `$JOB` on the volume: `$RUN` in a string of `input` / `params`
   is the run id, here and on a target, so `params={"work_dir":

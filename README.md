@@ -74,7 +74,7 @@ used them.
 | `search_operators`, `get_operator` | find operators by input / output type, text, tags; a card with the source |
 | `list_types`, `get_type` | domain types with fields and docstrings |
 | `validate` | type-check a spec; issues carry their place in the spec |
-| `run`, `run_status`, `wait_run`, `cancel_run`, `sample_run` | run a spec or a saved pipeline, locally or on a target; follow, stop, sample it |
+| `run`, `run_status`, `wait_run`, `cancel_run`, `sample_run`, `fetch_run` | run a spec or a saved pipeline, locally or on a target; follow, stop, sample it; finish a remote run that lost its stream |
 | `dashboard` | the URL of the Live Board |
 | `save_pipeline`, `list_pipelines`, `get_pipeline`, `delete_pipeline` | saved, validated specs with parameters |
 | `propose_operator`, `propose_types`, `delete_module` | write, edit or remove a draft module |

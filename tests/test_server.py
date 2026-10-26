@@ -52,6 +52,7 @@ TOOLS = {
     "delete_module",
     "assets_status",
     "fetch_assets",
+    "fetch_run",
     "volume_up",
     "volume_down",
 }

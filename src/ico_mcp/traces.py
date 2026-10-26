@@ -32,6 +32,8 @@ def write(
     drafts: JsonObject | None = None,
     profile: list[JsonValue] | None = None,
     resources: list[JsonValue] | None = None,
+    run_id: str | None = None,
+    target: str | None = None,
 ) -> Path:
     """Append a trace line for one run; ``started`` must be timezone-aware.
 
@@ -40,11 +42,14 @@ def write(
     its parameters; ``drafts`` the fingerprint of each draft operator's
     module (which draft code the run used); ``profile`` the profile of
     every node of a profiled run (``profiles.trace``); ``resources`` its
-    resource rows (``profiles.resources``).
+    resource rows (``profiles.resources``); ``run_id`` the run's id
+    (``runs/<run_id>/``) and ``target`` where it ran, if not here.
     """
     started = started.astimezone(UTC)
     trace: JsonObject = {
         "ts": started.isoformat().replace("+00:00", "Z"),
+        "run_id": run_id,
+        "target": target,
         "duration": round(duration, 3),
         "refs": _strings(op_refs(spec)),
         "spec": spec,
