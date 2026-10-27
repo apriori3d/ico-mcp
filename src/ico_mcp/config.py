@@ -121,6 +121,9 @@ class Config:
         root: The repository root (the directory of ``ico.toml``).
         name: Domain name.
         package: Stable operator package; drafts are in ``<package>_draft``.
+        libraries: Installed packages whose operators the domain uses
+            (e.g. ``layers``): loaded as stable, never edited or
+            crystallized here; they change through their own repositories.
         github: Pull request target; ``None`` until set (``crystallize``
             requires it).
         timeouts: Kernel request timeouts.
@@ -131,6 +134,7 @@ class Config:
     root: Path
     name: str
     package: str
+    libraries: tuple[str, ...] = ()
     github: GithubConfig | None = None
     timeouts: Timeouts = Timeouts()
     env: tuple[str, ...] = ()
@@ -205,6 +209,7 @@ def load_config(root: str | Path) -> Config:
     package = table.string("package")
     if not package.isidentifier():
         raise _error("package", "a Python identifier", package)
+    libraries = _libraries(table.get("libraries", []), package)
     github = _github(table.table("github")) if "github" in data else None
     timeouts = _timeouts(table.table("timeouts")) if "timeouts" in data else Timeouts()
     env = _env(table.get("env", []))
@@ -226,6 +231,7 @@ def load_config(root: str | Path) -> Config:
         root=root,
         name=name,
         package=package,
+        libraries=libraries,
         github=github,
         timeouts=timeouts,
         env=env,
@@ -320,6 +326,22 @@ def _timeouts(table: _Table) -> Timeouts:
     )
     table.reject_unknown()
     return timeouts
+
+
+def _libraries(value: object, package: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise _error("libraries", "a list of package names", value)
+    names: list[str] = []
+    own = {package, f"{package}_draft"}
+    for i, item in enumerate(cast(list[object], value)):
+        if not isinstance(item, str) or not item.isidentifier():
+            raise _error(f"libraries[{i}]", "a package name", item)
+        if item in own:
+            raise _error(f"libraries[{i}]", "a package other than the domain's", item)
+        if item in names:
+            raise _error(f"libraries[{i}]", "a package listed once", item)
+        names.append(item)
+    return tuple(names)
 
 
 def _env(value: object) -> tuple[str, ...]:

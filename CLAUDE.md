@@ -264,6 +264,18 @@ PR each:
     `run_id` and `target` in traces, `remote_error` with the ids when the
     stream is lost past `ICO_REMOTE_RETRY`, and the `fetch_run` tool.
 
+Apriori Studio (`../apriori-studio`, its proposal
+`docs/proposals/2026-10-27-apriori-studio.md`, section 6.7). One PR each:
+
+43. [x] Libraries: `libraries = [...]` in `ico.toml`, installed packages
+    whose top-level modules the kernel loads as stable before the
+    domain's packages; their operators and types in search and types; a
+    missing one is a load report error; not edited, crystallized or sent
+    to remote targets. `init` writes the line commented out.
+44. [ ] Session drafts, nested client packages, tool extensions from a
+    package, service mode (HTTP / SSE): each when the editor needs it
+    (Apriori Studio phase B).
+
 Assets and resources (ico `docs/proposals/2026-10-20-assets-and-resources.md`,
 its item 6; needs apriori3d/ico#75-#78):
 

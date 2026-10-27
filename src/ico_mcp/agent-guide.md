@@ -503,6 +503,11 @@ runs (input, outputs, errors, duration) as the evidence.
   imports of the stable package are **absolute**
   (`from <package>.media import VideoRef`). An absolute import of the
   draft package is rejected at the `write` stage.
+- Operators and types of a **library** (a package listed in `libraries`
+  of `ico.toml`, e.g. `layers`) are stable and are imported absolutely
+  (`from layers.masks import Mask`). They are not edited here: a change to
+  a library is a pull request to its own repository, which the human
+  makes.
 
 ```python
 # propose_types(module="media", code=...)
