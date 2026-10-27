@@ -39,6 +39,7 @@ or a label such as ``slow@1``); its answers are notifications of the run::
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import inspect
 import os
 import queue
@@ -65,7 +66,7 @@ from ico.core.runtime.runtime import IcoRuntime
 from ico.core.runtime.tool import IcoRuntimeTool
 from ico.core.signature_utils import format_ico_type
 from ico.core.tree_utils import TreePathIndex
-from ico.registry import RegistryEntry, default_registry, load_operators
+from ico.registry import LoadReport, RegistryEntry, default_registry, load_operators
 from ico.remote.runner import RUN_ENV, RUN_VAR
 from ico.spec import NodeSpec, PipelineSpec, SpecError, build, run, spec_params
 from ico.spec.run import DEFAULT_MAX_ITEMS
@@ -157,9 +158,18 @@ class Kernel:
     # ─── Methods ───
 
     def load(self, params: JsonObject) -> JsonValue:
-        """Load the stable and the draft package, or only ``modules``
-        (qualified names, e.g. ``domain_draft.slug``) and what they import."""
+        """Load the libraries, the stable and the draft package, or only
+        ``modules`` (qualified names, e.g. ``domain_draft.slug``) and what
+        they import.
+
+        Libraries come first: a domain module that imports one would
+        otherwise register its operators with their own status, not as
+        stable."""
         modules = _strings(params, "modules") if "modules" in params else None
+        libraries: JsonObject = {
+            name: _load_library(name, _in_package(modules, name)).to_dict()
+            for name in self.config.libraries
+        }
         stable = load_operators(
             self.config.stable_dir,
             status="stable",
@@ -172,6 +182,7 @@ class Kernel:
         )
         assets.register_builtins()
         packages = {
+            **{name: "stable" for name in self.config.libraries},
             self.config.stable_dir.name: "stable",
             self.config.draft_dir.name: "draft",
         }
@@ -188,7 +199,11 @@ class Kernel:
             "not a domain type and in no registered signature",
         )
         self.domain_index = TypeIndex(domain, "not a domain type (see list_types)")
-        return {"stable": stable.to_dict(), "draft": draft.to_dict()}
+        return {
+            "libraries": libraries,
+            "stable": stable.to_dict(),
+            "draft": draft.to_dict(),
+        }
 
     def search(self, params: JsonObject) -> JsonValue:
         text = _optional(params, "text", str)
@@ -626,6 +641,23 @@ def _issue(issue: SignatureIssue) -> JsonObject:
         "got": format_ico_type(issue.output) if issue.output is not None else None,
         "refs": [issue.left, issue.right],
     }
+
+
+def _load_library(name: str, modules: list[str] | None) -> LoadReport:
+    """Load an installed package's operators as stable; a package that is
+    not installed is an error of the report, not of the load."""
+    try:
+        spec = importlib.util.find_spec(name)
+    except (ImportError, ValueError):
+        spec = None
+    locations = list(spec.submodule_search_locations or []) if spec else []
+    if not locations:
+        error = (
+            f"library {name!r} is not installed in the domain's environment "
+            "(add it to pyproject.toml and run uv sync)"
+        )
+        return LoadReport(loaded=(), skipped=(), errors=((name, error),))
+    return load_operators(locations[0], status="stable", modules=modules)
 
 
 def _in_package(modules: list[str] | None, package: str) -> list[str] | None:

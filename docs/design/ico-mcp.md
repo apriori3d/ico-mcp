@@ -122,6 +122,32 @@ Modules in `<pkg>_draft` load as `draft`, modules in `<pkg>` as `stable`.
 This needs a small core change: `load_operators(path, status=...)` override
 (see roadmap item 0). `verified` is not used in the MVP.
 
+**Libraries.** A domain can use the operators and types of installed
+packages, e.g. Apriori Studio's `layers` and `marketplace` (editable from
+their checkout during development):
+
+```toml
+libraries = ["layers", "marketplace"]
+```
+
+- A library is a package installed in the domain's environment
+  (`pyproject.toml`). The kernel loads its top-level modules as `stable`,
+  **before** the domain's packages: a draft that imports a library module
+  would otherwise register its operators with their own status. A run's
+  kernel loads only the library modules its spec uses, as for the domain.
+- Its operators and types are found by `search_operators`, `get_operator`,
+  `list_types` and `get_type` like the domain's, and drafts import them
+  absolutely (`from layers.masks import Mask`).
+- The server never edits or crystallizes a library: it changes through
+  pull requests to its own repository. `reload` restarts the kernel, so
+  edits in an editable checkout apply without a reconnect.
+- A library that is not installed is an error of the load report
+  (`libraries.<name>.errors`); the domain's packages load all the same.
+- Remote runs do not carry libraries by value: a target's image has to
+  install them (not supported by the runner yet; no domain needs it).
+- A name equal to the domain's package or its draft package, or listed
+  twice, is a configuration error.
+
 **Type names.** Agents refer to types by short name (`Report`). The kernel
 resolves a short name over all types used in registered signatures; an
 ambiguous name is an error listing the candidates as `module:qualname`.

@@ -49,6 +49,13 @@ typecheck = "standard"
     assert config.typecheck == "standard"
 
 
+def test_libraries(tmp_path: Path) -> None:
+    toml = MINIMAL + 'libraries = ["layers", "marketplace"]\n'
+    config = load_config(make_repo(tmp_path, toml))
+
+    assert config.libraries == ("layers", "marketplace")
+
+
 def test_partial_timeouts_and_default_base(tmp_path: Path) -> None:
     toml = MINIMAL + 'timeouts = { run = 60 }\ngithub = { repo = "o/r" }\n'
     config = load_config(make_repo(tmp_path, toml))
@@ -126,6 +133,19 @@ def test_invalid_toml(tmp_path: Path) -> None:
         (MINIMAL + 'board = { port = "80" }\n', "board.port: expected a port number"),
         (MINIMAL + "board = { ip = 1 }\n", "unknown keys: board.ip"),
         (MINIMAL + 'pakage = "x"\n', "unknown keys: pakage"),
+        (MINIMAL + 'libraries = "layers"\n', "libraries: expected a list"),
+        (
+            MINIMAL + 'libraries = ["my-lib"]\n',
+            r"libraries\[0\]: expected a package name",
+        ),
+        (
+            MINIMAL + 'libraries = ["domain_draft"]\n',
+            r"libraries\[0\]: expected a package other than the domain's",
+        ),
+        (
+            MINIMAL + 'libraries = ["layers", "layers"]\n',
+            r"libraries\[1\]: expected a package listed once",
+        ),
     ],
 )
 def test_invalid_fields(tmp_path: Path, toml: str, message: str) -> None:

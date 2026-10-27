@@ -23,6 +23,7 @@ ICO_TOML = """\
 
 name = "$name"
 package = "$package"             # stable package; drafts in ${package}_draft
+# libraries = []               # installed packages whose operators the domain uses
 # about = "What this domain does, in a few lines (shown to agents)."
 # github = { repo = "owner/$name", base = "main" }  # needed by crystallize
 timeouts = { run = 600, validate = 30, load = 60, wait = 45 }

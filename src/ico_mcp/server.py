@@ -836,7 +836,8 @@ def create_server(
         """Restart the kernel and reload all operators (after a merge or edits).
 
         Drafts crystallized by a merged pull request are retired first.
-        Returns the load report of the stable and the draft package, and
+        Returns the load report of the libraries, the stable and the draft
+        package, and
         `drafts`: retired drafts, drafts whose imports were rewritten to the
         stable package, and conflicts (a draft that differs from its stable
         module). `server` is the `server_status` report: the kernel loads

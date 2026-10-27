@@ -128,7 +128,8 @@ class KernelClient:
         """(Re)start the kernel and load the operator packages.
 
         Returns:
-            The load report: ``{"stable": ..., "draft": ...}``.
+            The load report: ``{"libraries": {name: ...}, "stable": ...,
+            "draft": ...}``.
         """
         async with self._lock:
             await self._stop()
