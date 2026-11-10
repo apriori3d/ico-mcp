@@ -121,6 +121,8 @@ Never `ref`, never a function name: only `op` with `name@version`.
 | `process` | 1 (body) | `num_iterations` (int) | apply the body that many times |
 | `process` | 2 (body, until) | `max_iterations` (int), `on_limit` (`return` / `raise`) | apply the body until the predicate is true on its output |
 | `fold` | 2 (source, step) | – | `C → C`: for each item of the source (an op called with `null` that returns an iterator) the state becomes `step([item, state])`; the step is an op or `seq` over `tuple[I, C] → C`, e.g. a training step over (batch, model) |
+| `fold` | 3 (source, step, until) | – | as above, but stops before the next item once the predicate `C → bool` is true on the state (an early stop, e.g. a loss plateau); the source is closed |
+| `scan` | 2 or 3 (source, step, until) | – | `C → Iterator[tuple[O, C]]`: a fold with an output per item; the step is over `tuple[I, C] → tuple[O, C]`, each item yields `[out, state]` and the state goes on to the next item (per-frame tracking with a warm start); follow it with a `stream` that keeps the outputs |
 | `progress` | – | `total` (number; omit when unknown) | count the items passing by (dashboard, MCP progress) |
 | `identity` | – | – | pass items through |
 | `tap` | 1 | – | run the child for its side effect (files) and pass the **input** on: `I → I` |
@@ -128,6 +130,15 @@ Never `ref`, never a function name: only `op` with `name@version`.
 
 Any other `kind` fails with `Cannot build node of kind '…' yet`: there is
 no `map` / `foreach` / `par`; use `stream`, `async_stream` and `fork`.
+
+State that flows through items (a model, a tracker, an accumulator) is
+data, not a hidden context: the step takes `[item, state]` and returns
+the new state (`fold`) or `[output, state]` (`scan`); the initial state is
+the input of the node, so it comes from the step before it in a `seq`.
+Iterations of an optimizer are a `fold` over a source of iteration numbers
+with an `until` on a plateau, or a `process` with `until` when the step
+needs no item. A model that is only read is a resource or a constructor
+param, not a state.
 
 `async_stream`: with `"factory": true` it has one child, the worker flow,
 and every pool slot gets a fresh copy; with `"factory": false` it has
