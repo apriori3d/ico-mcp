@@ -465,6 +465,8 @@ UMT5 = Umt5()
   `fetch_assets(ids | pipeline | spec)` downloads as a run (`wait_run`,
   `cancel_run`; a later fetch continues the files); above 2 GB it returns
   `needs_confirmation` with the sizes until called with `confirm=true`.
+  A saved `pipeline` without `params` is checked with its `check_params`
+  in both tools; give `params` when they choose other assets (a model).
   Unlocked assets need `ico assets lock` by the human first.
 - `crystallize` takes `assets.toml` and `assets.lock` along, and its gate
   fails when a moved operator uses an asset that is not in both.
@@ -659,7 +661,8 @@ shows every node on the plan (columns after Flow).
   (the whole workflow, data locations, hardware) goes to the domain notes,
   `docs/domain.md` in the domain repository, which `guide` serves below. Give `params`
   for its parameters without a default: they only validate it (saved as
-  `check_params`, also used by the crystallize gate), never as run
+  `check_params`, also used by the crystallize gate and by
+  `assets_status` / `fetch_assets` without `params`), never as run
   values.
 - `delete_pipeline(name)` removes a saved pipeline that is no longer
   useful (e.g. an experiment), so `list_pipelines` stays short.

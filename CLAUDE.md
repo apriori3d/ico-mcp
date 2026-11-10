@@ -244,7 +244,7 @@ PR each:
     its progress nodes at zero) while the job waits for a GPU; today it
     comes with the worker's first events, and a 30-minute wait for a GPU
     showed an empty card. The same for the prefetch job of `fetch_assets`.
-39. [ ] `assets_status` / `fetch_assets` of a saved pipeline without
+39. [x] `assets_status` / `fetch_assets` of a saved pipeline without
     `params` take the pipeline's `check_params`; today a required
     parameter (`out_dir`) fails them.
 40. [x] A target with `storage` and an order volume stages its inputs and
