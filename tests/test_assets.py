@@ -277,6 +277,41 @@ async def test_fetch_assets_runs_as_a_job(domain: Config) -> None:
     assert again["state"] == "present"
 
 
+async def test_a_saved_pipeline_without_params_takes_its_check_params(
+    domain: Config,
+) -> None:
+    from mcp.client import Client
+
+    from ico_mcp.server import create_server
+
+    files = Files({"table.json": DATA})
+    manifest = domain.assets_manifest
+    manifest.write_text(manifest.read_text().replace("https://example.com", files.url))
+    async with Client(create_server(domain)) as client:
+        await call(
+            client,
+            "save_pipeline",
+            name="encode_table",
+            spec=encode(table={"$param": "table"}),
+            description="Encode with a table.",
+            params={"table": "table"},
+        )
+        checked = await call(client, "assets_status", pipeline="encode_table")
+        given = await call(
+            client, "assets_status", pipeline="encode_table", params={"table": "big"}
+        )
+        started = await call(client, "fetch_assets", pipeline="encode_table")
+        finished = await wait_done(client, started["run_id"])
+    files.server.shutdown()
+
+    assert [(i["id"], i["state"]) for i in checked["items"]] == [
+        ("encoder", "present"),
+        ("table", "missing"),
+    ]
+    assert [i["id"] for i in given["items"]] == ["encoder", "big"]
+    assert started["assets"] == ["table"] and finished["state"] == "done"
+
+
 async def test_a_large_fetch_needs_the_humans_word(domain: Config) -> None:
     from mcp.client import Client
 

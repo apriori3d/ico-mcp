@@ -943,6 +943,10 @@ def create_server(
         if pipeline is not None:
             with tool_errors():
                 spec = _saved(config, pipeline)
+            if params is None:
+                params = cast(
+                    "dict[str, JsonValue] | None", pipelines.check_params(spec)
+                )
         if spec is not None:
             request["spec"] = expand(cast(JsonObject, spec))
         if params is not None:
@@ -960,7 +964,9 @@ def create_server(
     ) -> dict[str, JsonValue]:
         """The state of assets (pinned files in `assets.toml`: weights,
         LoRAs, tables) on this machine: of the assets a saved `pipeline` or a
-        `spec` needs (with `params`), of `ids`, or of all. Each item has
+        `spec` needs (with `params`; a saved pipeline without them takes
+        its `check_params`, so give `params` when they choose other assets,
+        e.g. another model), of `ids`, or of all. Each item has
         `state` (present, missing, partial, wrong_size, unlocked, unknown),
         `size` and `to_fetch` in bytes; `to_fetch` is the total."""
         return await asset_request(ids, pipeline, spec, params)
@@ -975,7 +981,8 @@ def create_server(
         target: str | None = None,
     ) -> dict[str, JsonValue]:
         """Download missing assets (of `ids`, a `pipeline`, a `spec`, or
-        all) as a run: returns its `run_id` at once; follow it with
+        all; `params` as for `assets_status`, a saved pipeline without them
+        takes its `check_params`) as a run: returns its `run_id` at once; follow it with
         `wait_run`, stop it with `cancel_run` (a later fetch continues the
         files). More than 2 GB to fetch needs `confirm=true`: first tell the
         human what and how much (the call without `confirm` returns
